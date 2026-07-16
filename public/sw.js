@@ -1,18 +1,7 @@
-const CACHE_NAME = "dimensional-tcnc-v1";
-const ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/icon-192.png",
-  "/icon-512.png"
-];
+// Service Worker Autodestrutivo / Limpador de Cache
+// Isso força o navegador a deletar caches antigos e buscar a nova versão direto da rede.
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS).catch(() => {});
-    })
-  );
   self.skipWaiting();
 });
 
@@ -20,25 +9,13 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
+        keys.map((key) => caches.delete(key))
       );
+    }).then(() => {
+      return self.clients.claim();
     })
   );
-  self.clients.claim();
 });
 
-self.addEventListener("fetch", (e) => {
-  // Ignora chamadas de API do backend para que os dados sejam sempre em tempo real
-  if (e.request.url.includes("/api/")) {
-    return;
-  }
-  e.respondWith(
-    caches.match(e.request).then((cachedResponse) => {
-      return cachedResponse || fetch(e.request);
-    })
-  );
-});
+// Não interceptamos mais nenhum fetch para garantir que o navegador sempre pegue os arquivos atualizados da rede
+
