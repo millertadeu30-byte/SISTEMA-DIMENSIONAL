@@ -1,5 +1,5 @@
 export interface Registro {
-  linha?: number; // Para controle no backend
+  linha?: string | number; // Para controle no backend
   setorId?: string; // Setor a que pertence o registro
   data: string; // dd/MM/yyyy
   hora: string; // HH:mm:ss
@@ -18,6 +18,7 @@ export interface Registro {
   modeloPeca: string;
   comentarioSupervisor?: string; // Comentário adicionado pelo supervisor
   quemResolveu?: string; // Nome do colaborador que resolveu a NC
+  timestamp?: number; // Timestamp para ordenação
 }
 
 export interface Setor {

@@ -34,6 +34,27 @@ import {
   MonitoramentoResponse,
   Setor
 } from "./types";
+import {
+  inicializarBancoFirebase,
+  fbObterSetores,
+  fbCriarSetor,
+  fbAtualizarSetor,
+  fbExcluirSetor,
+  fbObterCadastro,
+  fbAdicionarColaborador,
+  fbRemoverColaborador,
+  fbAdicionarMaquina,
+  fbRemoverMaquina,
+  fbObterAlertas,
+  fbObterUltimoMotivo,
+  fbObterMonitoramento,
+  fbSalvarMedicao,
+  fbResolverNC,
+  fbLiberarDivergencia,
+  fbObterTodosRegistros,
+  fbExcluirRegistro,
+  fbAdicionarComentario
+} from "./firebase";
 
 export default function App() {
   // Estados de navegação e fluxos
@@ -182,10 +203,18 @@ export default function App() {
 
   const carregarSetores = async () => {
     try {
-      const res = await fetch("/api/setores");
-      if (res.ok) {
-        const data = await res.json();
-        setSetores(data);
+      const data = await fbObterSetores();
+      setSetores(data);
+      
+      const savedSetorId = localStorage.getItem("setorAtivoId");
+      if (savedSetorId && !setorSelecionado) {
+        const found = data.find(s => s.id === savedSetorId);
+        if (found) {
+          setSetorSelecionado(found);
+          carregarCadastro(found.id);
+          carregarAlertas(found.id);
+          carregarMonitoramento(found.id);
+        }
       }
     } catch (e) {
       console.error("Erro ao carregar setores:", e);
@@ -300,44 +329,30 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch("/api/setores", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          titulo: novoSetorTitulo,
-          senha: novoSetorSenha
-        })
-      });
-      if (res.ok) {
-        setNovoSetorTitulo("");
-        setNovoSetorSenha("");
-        await carregarSetores();
-        alert("SETOR CRIADO COM SUCESSO!");
-      } else {
-        alert("Erro ao criar setor.");
-      }
+      await fbCriarSetor(novoSetorTitulo, novoSetorSenha);
+      setNovoSetorTitulo("");
+      setNovoSetorSenha("");
+      await carregarSetores();
+      alert("SETOR CRIADO COM SUCESSO!");
     } catch (e) {
       console.error(e);
+      alert("Erro ao criar setor.");
     }
   };
 
   const deletarSetor = async (id: string) => {
     solicitarConfirmacao("DESEJA REALMENTE EXCLUIR ESTE SETOR? ESTA AÇÃO NÃO PODE SER DESFEITA.", async () => {
       try {
-        const res = await fetch(`/api/setores/${id}`, { method: "DELETE" });
-        if (res.ok) {
-          if (setorSelecionado?.id === id) {
-            realizarLogoutCompleto();
-          } else {
-            await carregarSetores();
-          }
-          alert("SETOR EXCLUÍDO COM SUCESSO!");
+        await fbExcluirSetor(id);
+        if (setorSelecionado?.id === id) {
+          realizarLogoutCompleto();
         } else {
-          const d = await res.json();
-          alert(d.error || "Erro ao excluir setor.");
+          await carregarSetores();
         }
+        alert("SETOR EXCLUÍDO COM SUCESSO!");
       } catch (e) {
         console.error(e);
+        alert(e instanceof Error ? e.message : "Erro ao excluir setor.");
       }
     });
   };
@@ -349,25 +364,18 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`/api/setores/${setorEmEdicao.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          titulo: editSetorTitulo,
-          senha: editSetorSenha,
-          maquinas: editSetorMaquinas.split(",").map(m => m.trim()).filter(Boolean),
-          colaboradores: editSetorColaboradores.split(",").map(c => c.trim()).filter(Boolean)
-        })
+      await fbAtualizarSetor(setorEmEdicao.id, {
+        titulo: editSetorTitulo,
+        senha: editSetorSenha,
+        maquinas: editSetorMaquinas.split(",").map(m => m.trim()).filter(Boolean),
+        colaboradores: editSetorColaboradores.split(",").map(c => c.trim()).filter(Boolean)
       });
-      if (res.ok) {
-        setSetorEmEdicao(null);
-        await carregarSetores();
-        alert("SETOR ATUALIZADO COM SUCESSO!");
-      } else {
-        alert("Erro ao atualizar setor.");
-      }
+      setSetorEmEdicao(null);
+      await carregarSetores();
+      alert("SETOR ATUALIZADO COM SUCESSO!");
     } catch (e) {
       console.error(e);
+      alert("Erro ao atualizar setor.");
     }
   };
 
@@ -389,7 +397,11 @@ export default function App() {
 
   // Inicialização e Carregamento de Dados
   useEffect(() => {
-    carregarSetores();
+    const initAndLoad = async () => {
+      await inicializarBancoFirebase();
+      await carregarSetores();
+    };
+    initAndLoad();
 
     // Atualiza relógio
     const updateTime = () => {
@@ -432,13 +444,9 @@ export default function App() {
   const carregarCadastro = async (sId?: string) => {
     try {
       const activeId = sId || (setorSelecionado ? setorSelecionado.id : "");
-      const url = activeId ? `/api/cadastro?setorId=${activeId}` : "/api/cadastro";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data: CadastroResponse = await res.json();
-        setColaboradores(data.colaboradores);
-        setMaquinas(data.maquinas);
-      }
+      const data = await fbObterCadastro(activeId);
+      setColaboradores(data.colaboradores);
+      setMaquinas(data.maquinas);
     } catch (e) {
       console.error("Erro ao carregar cadastro:", e);
     }
@@ -448,13 +456,9 @@ export default function App() {
   const carregarAlertas = async (sId?: string) => {
     try {
       const activeId = sId || (setorSelecionado ? setorSelecionado.id : "");
-      const url = activeId ? `/api/alertas?setorId=${activeId}` : "/api/alertas";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data: AlertasResponse = await res.json();
-        setNcPendentes(data.ncPendentes);
-        setHistorico(data.historico);
-      }
+      const data = await fbObterAlertas(activeId);
+      setNcPendentes(data.ncPendentes);
+      setHistorico(data.historico);
     } catch (e) {
       console.error("Erro ao carregar alertas:", e);
     }
@@ -464,25 +468,21 @@ export default function App() {
   const carregarMonitoramento = async (sId?: string) => {
     try {
       const activeId = sId || (setorSelecionado ? setorSelecionado.id : "");
-      const url = activeId ? `/api/monitoramento?setorId=${activeId}` : "/api/monitoramento";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data: MonitoramentoResponse = await res.json();
-        const listaParadas = data.paradas || [];
-        // Ordena as paradas: quem tem hora (em vermelho) fica no topo, ordenado ascendentemente (mais antigo primeiro); quem é "S/R" fica abaixo.
-        listaParadas.sort((a, b) => {
-          const aHasTime = a.hora !== "S/R";
-          const bHasTime = b.hora !== "S/R";
-          if (aHasTime && !bHasTime) return -1;
-          if (!aHasTime && bHasTime) return 1;
-          if (aHasTime && bHasTime) {
-            return a.hora.localeCompare(b.hora);
-          }
-          return a.maq.localeCompare(b.maq, undefined, { numeric: true });
-        });
-        setParadas(listaParadas);
-        setDesvios(data.desvios || []);
-      }
+      const data = await fbObterMonitoramento(activeId);
+      const listaParadas = data.paradas || [];
+      // Ordena as paradas: quem tem hora (em vermelho) fica no topo, ordenado ascendentemente (mais antigo primeiro); quem é "S/R" fica abaixo.
+      listaParadas.sort((a, b) => {
+        const aHasTime = a.hora !== "S/R";
+        const bHasTime = b.hora !== "S/R";
+        if (aHasTime && !bHasTime) return -1;
+        if (!aHasTime && bHasTime) return 1;
+        if (aHasTime && bHasTime) {
+          return a.hora.localeCompare(b.hora);
+        }
+        return a.maq.localeCompare(b.maq, undefined, { numeric: true });
+      });
+      setParadas(listaParadas);
+      setDesvios(data.desvios || []);
     } catch (e) {
       console.error("Erro ao carregar monitoramento:", e);
     }
@@ -535,17 +535,11 @@ export default function App() {
     setPayload(prev => ({ ...prev, maquina: maq }));
 
     try {
-      const res = await fetch(`/api/ultimo-motivo/${maq}?setorId=${setorSelecionado?.id || ""}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.motivo) {
-          // Se tiver um motivo pendente de desvio DMM, pré-preenche o formulário temporário
-          setTempDMM(data.motivo);
-          setPayload(prev => ({ ...prev, usoDMM: "NÃO" }));
-        } else {
-          setTempDMM("");
-          setPayload(prev => ({ ...prev, usoDMM: "SIM" }));
-        }
+      const motivo = await fbObterUltimoMotivo(maq, setorSelecionado?.id);
+      if (motivo) {
+        // Se tiver um motivo pendente de desvio DMM, pré-preenche o formulário temporário
+        setTempDMM(motivo);
+        setPayload(prev => ({ ...prev, usoDMM: "NÃO" }));
       } else {
         setTempDMM("");
         setPayload(prev => ({ ...prev, usoDMM: "SIM" }));
@@ -665,26 +659,17 @@ export default function App() {
     setLoadingText("SALVANDO REGISTRO...");
     setStep("loading");
     try {
-      const res = await fetch("/api/medicao", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...dadosFinais, setorId: setorSelecionado?.id })
-      });
-      if (res.ok) {
-        resetarFluxo();
-      } else {
-        alert("Erro ao salvar medição. Tente novamente.");
-        setStep(5);
-      }
+      await fbSalvarMedicao(dadosFinais, setorSelecionado?.id);
+      resetarFluxo();
     } catch (e) {
       console.error("Erro ao enviar dados:", e);
-      alert("Falha na comunicação com o servidor.");
+      alert("Falha ao salvar medição.");
       setStep(5);
     }
   };
 
   // Resolve uma NC específica
-  const resolverNCOnServer = async (linha: number, solucao: string, quemResolveu: string) => {
+  const resolverNCOnServer = async (linha: any, solucao: string, quemResolveu: string) => {
     if (!solucao.trim()) {
       alert("DESCREVA A SOLUÇÃO ADOTADA!");
       return;
@@ -696,24 +681,16 @@ export default function App() {
     setLoadingText("SALVANDO SOLUÇÃO...");
     setStep("loading");
     try {
-      const res = await fetch("/api/resolver-nc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ linha, solucao, quemResolveu })
+      await fbResolverNC(linha, solucao, quemResolveu);
+      setQuemResolveuNC(prev => {
+        const copy = { ...prev };
+        delete copy[linha];
+        return copy;
       });
-      if (res.ok) {
-        setQuemResolveuNC(prev => {
-          const copy = { ...prev };
-          delete copy[linha];
-          return copy;
-        });
-        resetarFluxo();
-      } else {
-        alert("Erro ao resolver NC.");
-        setStep("resolverNC");
-      }
+      resetarFluxo();
     } catch (e) {
       console.error(e);
+      alert("Erro ao resolver NC.");
       setStep("resolverNC");
     }
   };
@@ -723,19 +700,11 @@ export default function App() {
     setLoadingText("LIBERANDO MÁQUINA...");
     setStep("loading");
     try {
-      const res = await fetch("/api/liberar-divergencia", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maquina })
-      });
-      if (res.ok) {
-        resetarFluxo();
-      } else {
-        alert("Erro ao liberar máquina.");
-        setStep("liberarDiv");
-      }
+      await fbLiberarDivergencia(maquina, "SUPERVISOR", setorSelecionado?.id);
+      resetarFluxo();
     } catch (e) {
       console.error(e);
+      alert("Erro ao liberar máquina.");
       setStep("liberarDiv");
     }
   };
@@ -769,19 +738,15 @@ export default function App() {
   // Busca todos os registros do arquivo (Planilha)
   const carregarRegistros = async () => {
     try {
-      const url = setorSelecionado ? `/api/registros?setorId=${setorSelecionado.id}` : "/api/registros";
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setRegistrosCompletos(data);
-      }
+      const data = await fbObterTodosRegistros(setorSelecionado?.id);
+      setRegistrosCompletos(data);
     } catch (e) {
       console.error("Erro ao carregar registros completos:", e);
     }
   };
 
   // Salva comentário do supervisor em uma divergência específica
-  const salvarComentarioSupervisor = async (linha: number, comentario: string) => {
+  const salvarComentarioSupervisor = async (linha: any, comentario: string) => {
     if (!comentario.trim()) {
       alert("POR FAVOR, DIGITE UM COMENTÁRIO!");
       return;
@@ -789,66 +754,50 @@ export default function App() {
     setLoadingText("SALVANDO COMENTÁRIO...");
     setStep("loading");
     try {
-      const res = await fetch(`/api/registros/${linha}/comentar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comentario })
-      });
-      if (res.ok) {
-        resetarFluxo();
-      } else {
-        alert("Erro ao salvar comentário do supervisor.");
-        setStep("liberarDiv");
-      }
+      await fbAdicionarComentario(linha, comentario);
+      resetarFluxo();
     } catch (e) {
       console.error(e);
+      alert("Erro ao salvar comentário do supervisor.");
       setStep("liberarDiv");
     }
   };
 
   // Exclui uma divergência (mudar/remover registro) direto do painel do supervisor
-  const excluirDivergenciaPeloSupervisor = async (linha: number) => {
+  const excluirDivergenciaPeloSupervisor = async (linha: any) => {
     solicitarConfirmacao("DESEJA EXCLUIR ESTE REGISTRO DE DIVERGÊNCIA?", async () => {
       setLoadingText("EXCLUINDO REGISTRO...");
       setStep("loading");
       try {
-        const res = await fetch(`/api/registros/${linha}`, { method: "DELETE" });
-        if (res.ok) {
-          resetarFluxo();
-        } else {
-          alert("Erro ao excluir divergência.");
-          setStep("liberarDiv");
-        }
+        await fbExcluirRegistro(linha);
+        resetarFluxo();
       } catch (e) {
         console.error(e);
+        alert("Erro ao excluir divergência.");
         setStep("liberarDiv");
       }
     });
   };
 
   // Exclui registro completo a partir da planilha de registros arquivados
-  const excluirRegistroPeloRegistro = (linha: number) => {
+  const excluirRegistroPeloRegistro = (linha: any) => {
     verificarSenhaSupervisor(async () => {
       setLoadingText("EXCLUINDO REGISTRO...");
       setStep("loading");
       try {
-        const res = await fetch(`/api/registros/${linha}`, { method: "DELETE" });
-        if (res.ok) {
-          await carregarRegistros();
-          setStep("registros");
-        } else {
-          alert("Erro ao excluir registro.");
-          setStep("registros");
-        }
+        await fbExcluirRegistro(linha);
+        await carregarRegistros();
+        setStep("registros");
       } catch (e) {
         console.error(e);
+        alert("Erro ao excluir registro.");
         setStep("registros");
       }
     });
   };
 
   // Adiciona comentário de divergência a partir da planilha de registros arquivados
-  const comentarDivergenciaPeloRegistro = (linha: number) => {
+  const comentarDivergenciaPeloRegistro = (linha: any) => {
     const reg = registrosCompletos.find(r => r.linha === linha);
     if (!reg) return;
 
@@ -862,7 +811,7 @@ export default function App() {
 
     setModalComentarioMsg(msg);
     setModalComentarioInput(comentarioAtual);
-    setModalComentarioLinha(linha);
+    setModalComentarioLinha(linha as any);
     setModalComentarioOpen(true);
   };
 
@@ -880,20 +829,12 @@ export default function App() {
       setLoadingText("SALVANDO COMENTÁRIO...");
       setStep("loading");
       try {
-        const res = await fetch(`/api/registros/${linha}/comentar`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ comentario })
-        });
-        if (res.ok) {
-          await carregarRegistros();
-          setStep("registros");
-        } else {
-          alert("Erro ao salvar comentário.");
-          setStep("registros");
-        }
+        await fbAdicionarComentario(linha as any, comentario);
+        await carregarRegistros();
+        setStep("registros");
       } catch (e) {
         console.error(e);
+        alert("Erro ao salvar comentário.");
         setStep("registros");
       }
     });
@@ -961,21 +902,12 @@ export default function App() {
   const adicionarColaborador = async () => {
     if (!novoColaborador.trim()) return;
     try {
-      const res = await fetch("/api/cadastro/colaborador", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nome: novoColaborador })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setColaboradores(data.colaboradores);
-        setNovoColaborador("");
-      } else {
-        const data = await res.json();
-        alert(data.error || "Erro ao adicionar colaborador");
-      }
+      const data = await fbAdicionarColaborador(novoColaborador, setorSelecionado?.id);
+      setColaboradores(data);
+      setNovoColaborador("");
     } catch (e) {
       console.error(e);
+      alert("Erro ao adicionar colaborador.");
     }
   };
 
@@ -983,13 +915,11 @@ export default function App() {
   const removerColaborador = async (nome: string) => {
     solicitarConfirmacao(`DESEJA EXCLUIR O COLABORADOR ${nome}?`, async () => {
       try {
-        const res = await fetch(`/api/cadastro/colaborador/${nome}`, { method: "DELETE" });
-        if (res.ok) {
-          const data = await res.json();
-          setColaboradores(data.colaboradores);
-        }
+        const data = await fbRemoverColaborador(nome, setorSelecionado?.id);
+        setColaboradores(data);
       } catch (e) {
         console.error(e);
+        alert("Erro ao remover colaborador.");
       }
     });
   };
@@ -998,21 +928,12 @@ export default function App() {
   const adicionarMaquina = async () => {
     if (!novaMaquina.trim()) return;
     try {
-      const res = await fetch("/api/cadastro/maquina", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ codigo: novaMaquina })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMaquinas(data.maquinas);
-        setNovaMaquina("");
-      } else {
-        const data = await res.json();
-        alert(data.error || "Erro ao adicionar máquina");
-      }
+      const data = await fbAdicionarMaquina(novaMaquina, setorSelecionado?.id);
+      setMaquinas(data);
+      setNovaMaquina("");
     } catch (e) {
       console.error(e);
+      alert("Erro ao adicionar máquina.");
     }
   };
 
@@ -1020,13 +941,11 @@ export default function App() {
   const removerMaquina = async (codigo: string) => {
     solicitarConfirmacao(`DESEJA EXCLUIR A MÁQUINA ${codigo}?`, async () => {
       try {
-        const res = await fetch(`/api/cadastro/maquina/${codigo}`, { method: "DELETE" });
-        if (res.ok) {
-          const data = await res.json();
-          setMaquinas(data.maquinas);
-        }
+        const data = await fbRemoverMaquina(codigo, setorSelecionado?.id);
+        setMaquinas(data);
       } catch (e) {
         console.error(e);
+        alert("Erro ao remover máquina.");
       }
     });
   };
@@ -1932,84 +1851,92 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className={`grid grid-cols-1 gap-6 ${isAdmin ? "md:grid-cols-2 lg:grid-cols-3" : "md:grid-cols-2"}`}>
+                    <div className={`grid grid-cols-1 gap-6 ${
+                      setorSelecionado 
+                        ? (isAdmin ? "md:grid-cols-2 lg:grid-cols-3" : "md:grid-cols-2") 
+                        : "max-w-xl mx-auto w-full"
+                    }`}>
                       {/* Colaboradores */}
-                      <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col">
-                        <h3 className="font-bold text-sm tracking-wider text-blue-400 uppercase">Colaboradores</h3>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="NOVO OPERADOR..."
-                            value={novoColaborador}
-                            onChange={e => setNovoColaborador(e.target.value)}
-                            onKeyDown={e => e.key === "Enter" && adicionarColaborador()}
-                            className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-xl px-4 py-2.5 text-sm font-bold uppercase text-white"
-                          />
-                          <button
-                            onClick={adicionarColaborador}
-                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold p-3 rounded-xl transition flex items-center justify-center shadow"
-                          >
-                            <Plus size={18} />
-                          </button>
-                        </div>
-                        <div className="flex-1 max-h-[220px] overflow-y-auto pr-1.5 custom-scrollbar space-y-1.5">
-                          {colaboradores.map(colab => (
-                            <div
-                              key={colab}
-                              className="bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/60 flex justify-between items-center font-bold text-xs"
+                      {setorSelecionado && (
+                        <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col">
+                          <h3 className="font-bold text-sm tracking-wider text-blue-400 uppercase">Colaboradores</h3>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="NOVO OPERADOR..."
+                              value={novoColaborador}
+                              onChange={e => setNovoColaborador(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && adicionarColaborador()}
+                              className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-xl px-4 py-2.5 text-sm font-bold uppercase text-white"
+                            />
+                            <button
+                              onClick={adicionarColaborador}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-bold p-3 rounded-xl transition flex items-center justify-center shadow"
                             >
-                              <span className="uppercase">{colab}</span>
-                              <button
-                                onClick={() => removerColaborador(colab)}
-                                className="text-slate-500 hover:text-red-400 transition"
+                              <Plus size={18} />
+                            </button>
+                          </div>
+                          <div className="flex-1 max-h-[220px] overflow-y-auto pr-1.5 custom-scrollbar space-y-1.5">
+                            {colaboradores.map(colab => (
+                              <div
+                                key={colab}
+                                className="bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/60 flex justify-between items-center font-bold text-xs"
                               >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))}
+                                <span className="uppercase">{colab}</span>
+                                <button
+                                  onClick={() => removerColaborador(colab)}
+                                  className="text-slate-500 hover:text-red-400 transition"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Máquinas */}
-                      <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col">
-                        <h3 className="font-bold text-sm tracking-wider text-blue-400 uppercase">Máquinas TCNC</h3>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="CÓDIGO MÁQUINA..."
-                            value={novaMaquina}
-                            onChange={e => setNovaMaquina(e.target.value)}
-                            onKeyDown={e => e.key === "Enter" && adicionarMaquina()}
-                            className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-xl px-4 py-2.5 text-sm font-bold uppercase text-white"
-                          />
-                          <button
-                            onClick={adicionarMaquina}
-                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold p-3 rounded-xl transition flex items-center justify-center shadow"
-                          >
-                            <Plus size={18} />
-                          </button>
-                        </div>
-                        <div className="flex-1 max-h-[220px] overflow-y-auto pr-1.5 custom-scrollbar space-y-1.5">
-                          {maquinas.map(maq => (
-                            <div
-                              key={maq}
-                              className="bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/60 flex justify-between items-center font-bold text-xs font-mono"
+                      {setorSelecionado && (
+                        <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col">
+                          <h3 className="font-bold text-sm tracking-wider text-blue-400 uppercase">Máquinas</h3>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="CÓDIGO MÁQUINA..."
+                              value={novaMaquina}
+                              onChange={e => setNovaMaquina(e.target.value)}
+                              onKeyDown={e => e.key === "Enter" && adicionarMaquina()}
+                              className="flex-1 bg-slate-950 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-xl px-4 py-2.5 text-sm font-bold uppercase text-white"
+                            />
+                            <button
+                              onClick={adicionarMaquina}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-bold p-3 rounded-xl transition flex items-center justify-center shadow"
                             >
-                              <span className="uppercase text-blue-400">{maq}</span>
-                              <button
-                                onClick={() => removerMaquina(maq)}
-                                className="text-slate-500 hover:text-red-400 transition"
+                              <Plus size={18} />
+                            </button>
+                          </div>
+                          <div className="flex-1 max-h-[220px] overflow-y-auto pr-1.5 custom-scrollbar space-y-1.5">
+                            {maquinas.map(maq => (
+                              <div
+                                key={maq}
+                                className="bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/60 flex justify-between items-center font-bold text-xs font-mono"
                               >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))}
+                                <span className="uppercase text-blue-400">{maq}</span>
+                                <button
+                                  onClick={() => removerMaquina(maq)}
+                                  className="text-slate-500 hover:text-red-400 transition"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      {/* Projetos / Setores (Apenas para Admin "8619") */}
-                      {isAdmin && (
-                        <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col md:col-span-2 lg:col-span-1">
+                      {/* Projetos / Setores (Apenas para Admin "8619" ou se setorSelecionado é nulo) */}
+                      {(isAdmin || !setorSelecionado) && (
+                        <div className={`bg-slate-900/50 p-5 rounded-2xl border border-slate-800 space-y-4 flex flex-col ${setorSelecionado ? "md:col-span-2 lg:col-span-1" : "w-full"}`}>
                           <h3 className="font-bold text-sm tracking-wider text-blue-400 uppercase flex items-center gap-1.5">
                             <Lock size={15} className="text-yellow-500 animate-pulse" /> Projetos & Setores
                           </h3>
@@ -2067,6 +1994,26 @@ export default function App() {
                                         className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-lg px-2.5 py-1.5 text-xs text-white font-bold"
                                         placeholder="Senha do Setor"
                                       />
+                                      <div className="space-y-1">
+                                        <label className="text-[8px] text-slate-500 uppercase font-black block text-left">Colaboradores (Separados por vírgula)</label>
+                                        <input
+                                          type="text"
+                                          value={editSetorColaboradores}
+                                          onChange={e => setEditSetorColaboradores(e.target.value)}
+                                          className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-lg px-2.5 py-1.5 text-xs text-white uppercase font-bold"
+                                          placeholder="Ex: OPERADOR 1, OPERADOR 2"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[8px] text-slate-500 uppercase font-black block text-left">Máquinas (Separadas por vírgula)</label>
+                                        <input
+                                          type="text"
+                                          value={editSetorMaquinas}
+                                          onChange={e => setEditSetorMaquinas(e.target.value)}
+                                          className="w-full bg-slate-900 border border-slate-800 focus:border-blue-500 focus:outline-none rounded-lg px-2.5 py-1.5 text-xs text-white uppercase font-bold font-mono"
+                                          placeholder="Ex: 3, 4, 5"
+                                        />
+                                      </div>
                                       <div className="flex gap-1.5 justify-end">
                                         <button
                                           onClick={() => setSetorEmEdicao(null)}
