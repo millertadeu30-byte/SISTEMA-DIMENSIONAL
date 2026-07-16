@@ -8,6 +8,32 @@
     <meta name="theme-color" content="#1e293b" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <script>
+      // Prevenir que o Google Tradutor quebre o React (Erro de "removeChild" ou "insertBefore" que causa Tela Branca)
+      if (typeof Node !== 'undefined' && Node.prototype) {
+        const originalRemoveChild = Node.prototype.removeChild;
+        Node.prototype.removeChild = function(child) {
+          if (child && child.parentNode !== this) {
+            if (console) {
+              console.error('removeChild: parentNode mismatch ignorado para evitar Tela Branca', this, child);
+            }
+            return child;
+          }
+          return originalRemoveChild.apply(this, arguments);
+        };
+
+        const originalInsertBefore = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function(newNode, referenceNode) {
+          if (referenceNode && referenceNode.parentNode !== this) {
+            if (console) {
+              console.error('insertBefore: parentNode mismatch ignorado para evitar Tela Branca', this, referenceNode);
+            }
+            return newNode;
+          }
+          return originalInsertBefore.apply(this, arguments);
+        };
+      }
+    </script>
+    <script>
       // Forçar limpeza de Service Worker antigo e cache para evitar Tela Branca (White Screen) no Vercel/GitHub
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.getRegistrations().then((registrations) => {
