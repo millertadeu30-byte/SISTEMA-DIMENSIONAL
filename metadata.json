@@ -1,0 +1,6 @@
+{
+  "name": "Controle Dimensional TCNC",
+  "description": "Sistema avançado de controle dimensional industrial, acompanhamento de desvios, trocas de ferramentas e paradas de medição para tornos CNC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
