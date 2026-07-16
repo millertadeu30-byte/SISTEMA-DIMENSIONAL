@@ -121,26 +121,15 @@ export default function App() {
       const reg = registrosCompletos.find(r => r.linha === linha);
       if (!reg) return;
 
-      const res = await fetch("/api/resolver-nc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          linha,
-          solucao: reg.solucao || "REGULADO CONFORME PROCESSO",
-          quemResolveu: quem
-        })
-      });
+      await fbResolverNC(String(linha), reg.solucao || "REGULADO CONFORME PROCESSO", quem);
 
-      if (res.ok) {
-        setModalResolvidoPorOpen(false);
-        setRegistroSelecionadoParaResolvidoPor(null);
-        await carregarRegistros();
-        alert("RESPONSÁVEL PELA RESOLUÇÃO ATUALIZADO COM SUCESSO!");
-      } else {
-        alert("Erro ao atualizar o responsável.");
-      }
+      setModalResolvidoPorOpen(false);
+      setRegistroSelecionadoParaResolvidoPor(null);
+      await carregarRegistros();
+      alert("RESPONSÁVEL PELA RESOLUÇÃO ATUALIZADO COM SUCESSO!");
     } catch (e) {
       console.error(e);
+      alert("Erro ao atualizar o responsável.");
     }
   };
 
