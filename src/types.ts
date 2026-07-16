@@ -36,6 +36,7 @@ export interface AlertasResponse {
 
 export interface NCPendente {
   linha: number;
+  colaborador: string;
   responsavel: string;
   problema: string;
   maquina: string;
@@ -49,6 +50,7 @@ export interface HistoricoItem {
   maquina: string;
   problema: string;
   responsavel: string;
+  colaborador?: string;
   solucao: string;
 }
 

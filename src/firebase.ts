@@ -324,6 +324,7 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
     if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-" && solucao === "") {
       ncPendentes.push({
         linha: docId as any, // ID of document as key
+        colaborador: r.colaborador || "NÃO INFORMADO",
         responsavel: r.responsavel || "NÃO INFORMADO",
         problema: r.naoConformidade,
         maquina: r.maquina,
@@ -341,7 +342,8 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
         hora: r.hora.substring(0, 5),
         maquina: r.maquina,
         problema: textoNC,
-        responsavel: r.responsavel || r.colaborador,
+        responsavel: r.responsavel || "NÃO INFORMADO",
+        colaborador: r.colaborador || "NÃO INFORMADO",
         solucao: solucaoCompleta
       });
     }

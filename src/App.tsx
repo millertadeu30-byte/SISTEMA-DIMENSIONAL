@@ -1314,31 +1314,17 @@ export default function App() {
                             />
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
-                                CÓDIGO ALTERNATIVO DA PEÇA:
-                              </label>
-                              <input
-                                type="text"
-                                value={tempCod}
-                                onChange={e => setTempCod(e.target.value)}
-                                placeholder="EX: PCA-102"
-                                className="w-full bg-slate-950 border border-slate-800 focus:border-red-500 focus:outline-none rounded-xl px-4 py-3 text-base text-white font-bold uppercase placeholder:text-slate-600"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
-                                MODELO DA PEÇA (NOVO):
-                              </label>
-                              <input
-                                type="text"
-                                value={tempModelo}
-                                onChange={e => setTempModelo(e.target.value)}
-                                placeholder="EX: MODELO-XYZ"
-                                className="w-full bg-slate-950 border border-slate-800 focus:border-red-500 focus:outline-none rounded-xl px-4 py-3 text-base text-white font-bold uppercase placeholder:text-slate-600"
-                              />
-                            </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
+                              CÓDIGO ALTERNATIVO DA PEÇA:
+                            </label>
+                            <input
+                              type="text"
+                              value={tempCod}
+                              onChange={e => setTempCod(e.target.value)}
+                              placeholder="EX: PCA-102"
+                              className="w-full bg-slate-950 border border-slate-800 focus:border-red-500 focus:outline-none rounded-xl px-4 py-3 text-base text-white font-bold uppercase placeholder:text-slate-600"
+                            />
                           </div>
 
                           <div>
@@ -1673,11 +1659,14 @@ export default function App() {
                                   {item.problema}
                                 </span>
                               </div>
-                              <div className="text-xs bg-slate-950/40 p-2.5 rounded-xl border border-slate-900">
-                                <div className="mb-1 text-slate-400">
-                                  <span className="font-bold">RESPONSÁVEL:</span> {item.responsavel}
+                              <div className="text-xs bg-slate-950/40 p-2.5 rounded-xl border border-slate-900 space-y-1">
+                                <div className="text-slate-400">
+                                  <span className="font-bold">IDENTIFICADO POR:</span> <span className="text-red-400 font-bold">{item.colaborador || "NÃO INFORMADO"}</span>
                                 </div>
-                                <div className="text-slate-300">
+                                <div className="text-slate-400">
+                                  <span className="font-bold">COMUNICADO PARA:</span> <span className="text-orange-400 font-bold">{item.responsavel}</span>
+                                </div>
+                                <div className="text-slate-300 pt-1 border-t border-slate-900/60 mt-1">
                                   <span className="font-bold text-slate-400">SOLUÇÃO:</span> {item.solucao || "-"}
                                 </div>
                               </div>
@@ -1727,8 +1716,14 @@ export default function App() {
                             <span className="bg-red-950/80 text-red-400 border border-red-900/50 px-2.5 py-0.5 rounded text-[10px] font-mono tracking-wider font-bold">
                               MAQ: {nc.maquina} | {nc.data} às {nc.hora}
                             </span>
-                            <div className="text-slate-400 text-xs font-bold uppercase mt-2">
-                              Identificado por: <span className="text-red-400">{nc.responsavel}</span>
+                            <div className="text-slate-400 text-xs font-bold uppercase mt-2 flex flex-col gap-1 sm:flex-row sm:gap-4">
+                              <div>
+                                Identificado por: <span className="text-red-400 font-black">{nc.colaborador || "NÃO INFORMADO"}</span>
+                              </div>
+                              <div className="hidden sm:block text-slate-600">|</div>
+                              <div>
+                                Comunicado para: <span className="text-orange-400 font-black">{nc.responsavel}</span>
+                              </div>
                             </div>
                             <div className="text-lg font-black text-slate-100 mt-1 uppercase">
                               {nc.problema}

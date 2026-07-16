@@ -380,6 +380,7 @@ app.get("/api/alertas", async (req, res) => {
       if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-" && solucao === "") {
         ncPendentes.push({
           linha: idx, // usamos o index como identificador original
+          colaborador: r.colaborador || "NÃO INFORMADO",
           responsavel: r.responsavel || "NÃO INFORMADO",
           problema: r.naoConformidade,
           maquina: r.maquina,
@@ -398,7 +399,8 @@ app.get("/api/alertas", async (req, res) => {
           hora: r.hora.substring(0, 5),
           maquina: r.maquina,
           problema: textoNC,
-          responsavel: r.responsavel || r.colaborador,
+          responsavel: r.responsavel || "NÃO INFORMADO",
+          colaborador: r.colaborador || "NÃO INFORMADO",
           solucao: solucaoCompleta
         });
       }
