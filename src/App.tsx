@@ -21,7 +21,12 @@ import {
   Sliders,
   ChevronRight,
   MessageSquare,
-  Info
+  Info,
+  BarChart3,
+  TrendingUp,
+  Calendar,
+  AlertCircle,
+  Award
 } from "lucide-react";
 import {
   Registro,
@@ -58,8 +63,18 @@ import {
 
 export default function App() {
   // Estados de navegação e fluxos
-  const [step, setStep] = useState<number | "loading" | "historico" | "resolverNC" | "liberarDiv" | "config" | "registros">(1);
+  const [step, setStep] = useState<number | "loading" | "historico" | "resolverNC" | "liberarDiv" | "config" | "registros" | "estatisticas">(1);
   const [loadingText, setLoadingText] = useState("CARREGANDO...");
+
+  // Estados para estatísticas
+  const [dataFiltroEstDe, setDataFiltroEstDe] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split("T")[0];
+  });
+  const [dataFiltroEstAte, setDataFiltroEstAte] = useState<string>(() => {
+    return new Date().toISOString().split("T")[0];
+  });
 
   // Estados de setores e ADM
   const [setores, setSetores] = useState<Setor[]>([]);
@@ -162,6 +177,131 @@ export default function App() {
   // Formulários de controle de cadastro (Supervisor)
   const [novoColaborador, setNovoColaborador] = useState("");
   const [novaMaquina, setNovaMaquina] = useState("");
+
+  // Cálculos reativos para a tela de Estatísticas
+  const estatisticasCalculadas = React.useMemo(() => {
+    // 1. Converter datas de string ISO para objetos Date robustos
+    const dateDe = dataFiltroEstDe ? new Date(dataFiltroEstDe + "T00:00:00") : new Date(2000, 0, 1);
+    const dateAte = dataFiltroEstAte ? new Date(dataFiltroEstAte + "T23:59:59") : new Date();
+
+    // Filtra registros do setor selecionado que caem no período de data
+    const registrosSetorPeriodo = registrosCompletos.filter(r => {
+      if (r.setorId !== setorSelecionado?.id) return false;
+      const partsData = r.data.split('/');
+      if (partsData.length !== 3) return false;
+      const dataISO = `${partsData[2]}-${partsData[1]}-${partsData[0]}`; // YYYY-MM-DD
+      
+      const fitsDe = !dataFiltroEstDe || dataISO >= dataFiltroEstDe;
+      const fitsAte = !dataFiltroEstAte || dataISO <= dataFiltroEstAte;
+      return fitsDe && fitsAte;
+    });
+
+    // Helper para parsear data/hora de cada registro
+    const parseRegistroDateTime = (r: Registro) => {
+      const partsData = r.data.split('/');
+      if (partsData.length !== 3) return null;
+      const day = parseInt(partsData[0], 10);
+      const month = parseInt(partsData[1], 10) - 1;
+      const year = parseInt(partsData[2], 10);
+      
+      let hour = 0, min = 0, sec = 0;
+      if (r.hora) {
+        const partsHora = r.hora.split(':');
+        if (partsHora.length >= 2) {
+          hour = parseInt(partsHora[0], 10);
+          min = parseInt(partsHora[1], 10);
+        }
+        if (partsHora.length >= 3) {
+          sec = parseInt(partsHora[2], 10);
+        }
+      }
+      return new Date(year, month, day, hour, min, sec);
+    };
+
+    // --- CÁLCULO 1: RANKING DE NÃO CONFORMIDADES ---
+    const ncPorMaquina: { [key: string]: number } = {};
+    // Inicializar todas as maquinas do setor com 0
+    maquinas.forEach(maq => {
+      ncPorMaquina[maq] = 0;
+    });
+
+    registrosSetorPeriodo.forEach(r => {
+      const isNC = r.conforme === "NÃO" || (r.naoConformidade && r.naoConformidade !== "OK" && r.naoConformidade !== "CONFORME" && r.naoConformidade !== "-");
+      if (isNC && r.maquina) {
+        const key = r.maquina.trim().toUpperCase();
+        if (ncPorMaquina[key] !== undefined) {
+          ncPorMaquina[key]++;
+        } else {
+          ncPorMaquina[key] = 1;
+        }
+      }
+    });
+
+    const rankingNCs = Object.keys(ncPorMaquina).map(maq => ({
+      maquina: maq,
+      quantidade: ncPorMaquina[maq]
+    })).sort((a, b) => b.quantidade - a.quantidade);
+
+    // --- CÁLCULO 2: MAIOR GAP SEM MEDIR (TEMPO OCIOSO) ---
+    // Determinando limites de análise de tempo
+    const limitInicio = dateDe;
+    // O limite final de análise deve ser a data de hoje/momento atual caso o limite do filtro esteja no futuro ou hoje
+    const hojeMs = Date.now();
+    const limitFim = dateAte.getTime() > hojeMs ? new Date(hojeMs) : dateAte;
+
+    const ociosidadePorMaquina = maquinas.map(maq => {
+      const maqKey = maq.trim().toUpperCase();
+      // Filtrar e parsear registros dessa máquina
+      const registrosMaq = registrosSetorPeriodo
+        .filter(r => r.maquina && r.maquina.trim().toUpperCase() === maqKey)
+        .map(r => ({
+          r,
+          date: parseRegistroDateTime(r)
+        }))
+        .filter((item): item is { r: Registro; date: Date } => item.date !== null)
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+      let maxGapMs = 0;
+
+      if (registrosMaq.length === 0) {
+        // Se não houver medição no período todo, o gap é o período filtrado inteiro
+        maxGapMs = Math.max(0, limitFim.getTime() - limitInicio.getTime());
+      } else {
+        // Gap inicial (da data De do filtro até a primeira medição)
+        const gapInicial = registrosMaq[0].date.getTime() - limitInicio.getTime();
+        if (gapInicial > 0) {
+          maxGapMs = gapInicial;
+        }
+
+        // Gaps entre medições sucessivas
+        for (let i = 1; i < registrosMaq.length; i++) {
+          const gap = registrosMaq[i].date.getTime() - registrosMaq[i - 1].date.getTime();
+          if (gap > maxGapMs) {
+            maxGapMs = gap;
+          }
+        }
+
+        // Gap final (da última medição até a data Até/limite final)
+        const gapFinal = limitFim.getTime() - registrosMaq[registrosMaq.length - 1].date.getTime();
+        if (gapFinal > maxGapMs) {
+          maxGapMs = gapFinal;
+        }
+      }
+
+      return {
+        maquina: maq,
+        maxGapMs,
+        hasMedicoes: registrosMaq.length > 0,
+        totalMedicoes: registrosMaq.length
+      };
+    }).sort((a, b) => b.maxGapMs - a.maxGapMs);
+
+    return {
+      rankingNCs,
+      ociosidadePorMaquina,
+      totalRegistrosPeriodo: registrosSetorPeriodo.length
+    };
+  }, [registrosCompletos, setorSelecionado, maquinas, dataFiltroEstDe, dataFiltroEstAte]);
 
   // Estados para diálogos customizados (Evitando prompt, confirm, alert nativos que travam em iframes)
   const [modalSenhaOpen, setModalSenhaOpen] = useState(false);
@@ -1185,6 +1325,15 @@ export default function App() {
                           <History size={12} className="text-blue-500/80" /> HISTÓRICO
                         </button>
                         <button
+                          onClick={() => {
+                            carregarRegistros();
+                            setStep("estatisticas");
+                          }}
+                          className="bg-slate-950/60 hover:bg-slate-950 border border-slate-800 hover:border-indigo-500/30 text-slate-400 hover:text-slate-200 font-bold px-3 py-2 rounded-xl text-[11px] flex items-center gap-1.5 shadow transition"
+                        >
+                          <BarChart3 size={12} className="text-indigo-500/80" /> ESTATÍSTICAS
+                        </button>
+                        <button
                           onClick={() => verificarSenhaSupervisor(() => setStep("config"))}
                           className="bg-slate-950/60 hover:bg-slate-950 border border-slate-800 hover:border-yellow-500/30 text-slate-400 hover:text-slate-200 font-bold px-3 py-2 rounded-xl text-[11px] flex items-center gap-1.5 shadow transition"
                           title="Configurações do sistema"
@@ -1807,6 +1956,217 @@ export default function App() {
                           Nenhuma Não Conformidade pendente!
                         </div>
                       )}
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* PAINEL DE ESTATÍSTICAS */}
+                {step === "estatisticas" && (
+                  <motion.div
+                    key="estatisticas"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="space-y-6 text-left"
+                  >
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                      <div>
+                        <h2 className="text-xl font-black text-indigo-400 flex items-center gap-2 uppercase tracking-tight">
+                          <BarChart3 size={24} className="text-indigo-500" /> ESTATÍSTICAS DO SETOR
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5">Análise de Não Conformidades e tempos sem medição</p>
+                      </div>
+                      <button
+                        onClick={resetarFluxo}
+                        className="bg-slate-900 hover:bg-slate-950 text-slate-400 hover:text-white px-4 py-2 rounded-xl text-xs font-bold border border-slate-800 transition"
+                      >
+                        FECHAR
+                      </button>
+                    </div>
+
+                    {/* Filtros de data */}
+                    <div className="bg-slate-950/40 p-4 rounded-2xl border border-slate-900 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar size={12} className="text-indigo-400" /> DE (DATA INÍCIO):
+                        </label>
+                        <input
+                          type="date"
+                          value={dataFiltroEstDe}
+                          onChange={e => setDataFiltroEstDe(e.target.value)}
+                          className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-4 py-3 text-sm font-bold text-white transition-all"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar size={12} className="text-indigo-400" /> ATÉ (DATA FIM):
+                        </label>
+                        <input
+                          type="date"
+                          value={dataFiltroEstAte}
+                          onChange={e => setDataFiltroEstAte(e.target.value)}
+                          className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-4 py-3 text-sm font-bold text-white transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Cards de Resumo */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800/80 shadow-md">
+                        <div className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1">Total de Medições</div>
+                        <div className="text-3xl font-black text-indigo-400 font-mono">
+                          {estatisticasCalculadas.totalRegistrosPeriodo}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">Registros de medição no período</div>
+                      </div>
+
+                      <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800/80 shadow-md">
+                        <div className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                          <AlertTriangle size={12} className="text-red-400" /> Mais Não Conformidades
+                        </div>
+                        <div className="text-2xl font-black text-red-400 truncate uppercase mt-0.5">
+                          {estatisticasCalculadas.rankingNCs[0]?.quantidade > 0 
+                            ? `MAQ: ${estatisticasCalculadas.rankingNCs[0].maquina}` 
+                            : "NENHUMA"}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          {estatisticasCalculadas.rankingNCs[0]?.quantidade > 0 
+                            ? `${estatisticasCalculadas.rankingNCs[0].quantidade} NCs registradas` 
+                            : "Nenhuma NC no período"}
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800/80 shadow-md">
+                        <div className="text-xs font-black text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                          <Clock size={12} className="text-orange-400" /> Mais Tempo Sem Medição
+                        </div>
+                        <div className="text-2xl font-black text-orange-400 truncate uppercase mt-0.5">
+                          {estatisticasCalculadas.ociosidadePorMaquina[0]?.maxGapMs > 0 
+                            ? `MAQ: ${estatisticasCalculadas.ociosidadePorMaquina[0].maquina}` 
+                            : "NENHUMA"}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1 truncate">
+                          {estatisticasCalculadas.ociosidadePorMaquina[0]?.maxGapMs > 0 
+                            ? `Gap de: ${(() => {
+                                const ms = estatisticasCalculadas.ociosidadePorMaquina[0].maxGapMs;
+                                const totalMinutos = Math.floor(ms / (1000 * 60));
+                                const totalHoras = Math.floor(totalMinutos / 60);
+                                const dias = Math.floor(totalHoras / 24);
+                                const horasRestantes = totalHoras % 24;
+                                const minutosRestantes = totalMinutos % 60;
+                                return dias > 0 ? `${dias}d ${horasRestantes}h` : `${totalHoras}h ${minutosRestantes}m`;
+                              })()}` 
+                            : "Sem tempo ocioso"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Gráficos / Rankings de Estatísticas */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+                      {/* Ranking NCs */}
+                      <div className="bg-slate-900/40 border border-slate-850 p-5 rounded-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
+                          <h3 className="font-black text-sm text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                            <TrendingUp size={16} className="text-red-500" /> MÁQUINAS COM MAIS NÃO CONFORMIDADES
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1.5 custom-scrollbar">
+                          {estatisticasCalculadas.rankingNCs.map((item, index) => {
+                            const maxNCs = estatisticasCalculadas.rankingNCs[0]?.quantidade || 1;
+                            const percent = maxNCs > 0 ? (item.quantidade / maxNCs) * 100 : 0;
+                            return (
+                              <div key={item.maquina} className="space-y-1.5">
+                                <div className="flex justify-between items-center text-xs font-bold uppercase">
+                                  <div className="flex items-center gap-2 text-slate-300">
+                                    <span className="text-[10px] bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 text-slate-400 font-mono">
+                                      {index + 1}º
+                                    </span>
+                                    <span>MÁQUINA: <strong className="text-white font-black font-mono">{item.maquina}</strong></span>
+                                  </div>
+                                  <span className="text-red-400 font-black">{item.quantidade} NC{item.quantidade !== 1 && "s"}</span>
+                                </div>
+                                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-900">
+                                  <div 
+                                    className="bg-red-500 h-full rounded-full transition-all duration-500" 
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {estatisticasCalculadas.rankingNCs.length === 0 && (
+                            <div className="text-center py-8 text-slate-500 font-bold text-xs uppercase">
+                              Nenhuma máquina com não conformidade encontrada.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Ranking Ociosidade */}
+                      <div className="bg-slate-900/40 border border-slate-850 p-5 rounded-2xl space-y-4">
+                        <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
+                          <h3 className="font-black text-sm text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                            <Clock size={16} className="text-orange-500" /> MÁQUINAS QUE FICARAM MAIS TEMPO SEM MEDIR
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1.5 custom-scrollbar">
+                          {estatisticasCalculadas.ociosidadePorMaquina.map((item, index) => {
+                            const maxGap = estatisticasCalculadas.ociosidadePorMaquina[0]?.maxGapMs || 1;
+                            const percent = maxGap > 0 ? (item.maxGapMs / maxGap) * 100 : 0;
+                            
+                            // Formatar o maior gap em formato legível
+                            const formatarGap = (ms: number) => {
+                              if (ms <= 0) return "0 min";
+                              const totalMinutos = Math.floor(ms / (1000 * 60));
+                              const totalHoras = Math.floor(totalMinutos / 60);
+                              const dias = Math.floor(totalHoras / 24);
+                              const horasRestantes = totalHoras % 24;
+                              const minutosRestantes = totalMinutos % 60;
+                              
+                              const partes: string[] = [];
+                              if (dias > 0) partes.push(`${dias}d`);
+                              if (horasRestantes > 0 || dias > 0) partes.push(`${horasRestantes}h`);
+                              partes.push(`${minutosRestantes}m`);
+                              
+                              return partes.join(" ");
+                            };
+
+                            return (
+                              <div key={item.maquina} className="space-y-1.5">
+                                <div className="flex justify-between items-center text-xs font-bold uppercase">
+                                  <div className="flex items-center gap-2 text-slate-300">
+                                    <span className="text-[10px] bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 text-slate-400 font-mono">
+                                      {index + 1}º
+                                    </span>
+                                    <span>MÁQUINA: <strong className="text-white font-black font-mono">{item.maquina}</strong></span>
+                                  </div>
+                                  <div className="text-right flex items-center gap-1.5">
+                                    <span className="text-orange-400 font-black font-mono">{formatarGap(item.maxGapMs)}</span>
+                                    <span className="text-[9px] bg-slate-950 border border-slate-850 px-1.5 py-0.5 rounded text-slate-500">
+                                      {item.totalMedicoes} med.
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-900">
+                                  <div 
+                                    className="bg-orange-500 h-full rounded-full transition-all duration-500" 
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {estatisticasCalculadas.ociosidadePorMaquina.length === 0 && (
+                            <div className="text-center py-8 text-slate-500 font-bold text-xs uppercase">
+                              Nenhuma máquina encontrada no setor.
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </motion.div>
                 )}
