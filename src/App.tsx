@@ -68,13 +68,38 @@ export default function App() {
 
   // Estados para estatísticas
   const [dataFiltroEstDe, setDataFiltroEstDe] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 7);
-    return d.toISOString().split("T")[0];
+    return localStorage.getItem("filtro_est_de") || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      return d.toISOString().split("T")[0];
+    })();
   });
   const [dataFiltroEstAte, setDataFiltroEstAte] = useState<string>(() => {
-    return new Date().toISOString().split("T")[0];
+    return localStorage.getItem("filtro_est_ate") || new Date().toISOString().split("T")[0];
   });
+  const [horaFiltroEstDe, setHoraFiltroEstDe] = useState<string>(() => {
+    return localStorage.getItem("filtro_est_hora_de") || "00:00";
+  });
+  const [horaFiltroEstAte, setHoraFiltroEstAte] = useState<string>(() => {
+    return localStorage.getItem("filtro_est_hora_ate") || "23:59";
+  });
+
+  // Persistir filtros de estatísticas no localStorage
+  useEffect(() => {
+    localStorage.setItem("filtro_est_de", dataFiltroEstDe);
+  }, [dataFiltroEstDe]);
+
+  useEffect(() => {
+    localStorage.setItem("filtro_est_ate", dataFiltroEstAte);
+  }, [dataFiltroEstAte]);
+
+  useEffect(() => {
+    localStorage.setItem("filtro_est_hora_de", horaFiltroEstDe);
+  }, [horaFiltroEstDe]);
+
+  useEffect(() => {
+    localStorage.setItem("filtro_est_hora_ate", horaFiltroEstAte);
+  }, [horaFiltroEstAte]);
 
   // Estados de setores e ADM
   const [setores, setSetores] = useState<Setor[]>([]);
@@ -180,21 +205,30 @@ export default function App() {
 
   // Cálculos reativos para a tela de Estatísticas
   const estatisticasCalculadas = React.useMemo(() => {
-    // 1. Converter datas de string ISO para objetos Date robustos
-    const dateDe = dataFiltroEstDe ? new Date(dataFiltroEstDe + "T00:00:00") : new Date(2000, 0, 1);
-    const dateAte = dataFiltroEstAte ? new Date(dataFiltroEstAte + "T23:59:59") : new Date();
-
-    // Filtra registros do setor selecionado que caem no período de data
-    const registrosSetorPeriodo = registrosCompletos.filter(r => {
-      if (r.setorId !== setorSelecionado?.id) return false;
-      const partsData = r.data.split('/');
-      if (partsData.length !== 3) return false;
-      const dataISO = `${partsData[2]}-${partsData[1]}-${partsData[0]}`; // YYYY-MM-DD
+    // Helper para converter data e hora em Date sem problemas de fuso horário
+    const parseDateInputAndHour = (dateStr: string, timeStr: string) => {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return new Date();
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
       
-      const fitsDe = !dataFiltroEstDe || dataISO >= dataFiltroEstDe;
-      const fitsAte = !dataFiltroEstAte || dataISO <= dataFiltroEstAte;
-      return fitsDe && fitsAte;
-    });
+      let hour = 0;
+      let min = 0;
+      if (timeStr) {
+        const timeParts = timeStr.split(':');
+        if (timeParts.length >= 2) {
+          hour = parseInt(timeParts[0], 10);
+          min = parseInt(timeParts[1], 10);
+        }
+      }
+      return new Date(year, month, day, hour, min, 0);
+    };
+
+    const dateDe = dataFiltroEstDe ? parseDateInputAndHour(dataFiltroEstDe, horaFiltroEstDe || "00:00") : new Date(2000, 0, 1);
+    const dateAte = dataFiltroEstAte ? parseDateInputAndHour(dataFiltroEstAte, horaFiltroEstAte || "23:59") : new Date();
+    // Definir segundos no final do período
+    dateAte.setSeconds(59);
 
     // Helper para parsear data/hora de cada registro
     const parseRegistroDateTime = (r: Registro) => {
@@ -217,6 +251,15 @@ export default function App() {
       }
       return new Date(year, month, day, hour, min, sec);
     };
+
+    // Filtra registros do setor selecionado que caem no período de data E hora
+    const registrosSetorPeriodo = registrosCompletos.filter(r => {
+      if (r.setorId !== setorSelecionado?.id) return false;
+      const rDate = parseRegistroDateTime(r);
+      if (!rDate || isNaN(rDate.getTime())) return false;
+      
+      return rDate.getTime() >= dateDe.getTime() && rDate.getTime() <= dateAte.getTime();
+    });
 
     // --- CÁLCULO 1: RANKING DE NÃO CONFORMIDADES ---
     const ncPorMaquina: { [key: string]: number } = {};
@@ -243,13 +286,11 @@ export default function App() {
     })).sort((a, b) => b.quantidade - a.quantidade);
 
     // --- CÁLCULO 2: MAIOR GAP SEM MEDIR (TEMPO OCIOSO) ---
-    // Determinando limites de análise de tempo
+    // Determinando limites de análise de tempo baseando-se estritamente nos filtros
     const limitInicio = dateDe;
-    // O limite final de análise deve ser a data de hoje/momento atual caso o limite do filtro esteja no futuro ou hoje
-    const hojeMs = Date.now();
-    const limitFim = dateAte.getTime() > hojeMs ? new Date(hojeMs) : dateAte;
+    const limitFim = dateAte;
 
-    const ociosidadePorMaquina = maquinas.map(maq => {
+    const ociosidadePorMaquinaTotal = maquinas.map(maq => {
       const maqKey = maq.trim().toUpperCase();
       // Filtrar e parsear registros dessa máquina
       const registrosMaq = registrosSetorPeriodo
@@ -258,19 +299,25 @@ export default function App() {
           r,
           date: parseRegistroDateTime(r)
         }))
-        .filter((item): item is { r: Registro; date: Date } => item.date !== null)
+        .filter((item): item is { r: Registro; date: Date } => item.date !== null && !isNaN(item.date.getTime()))
         .sort((a, b) => a.date.getTime() - b.date.getTime());
 
       let maxGapMs = 0;
+      let maxGapStart: Date = limitInicio;
+      let maxGapEnd: Date = limitFim;
 
       if (registrosMaq.length === 0) {
         // Se não houver medição no período todo, o gap é o período filtrado inteiro
         maxGapMs = Math.max(0, limitFim.getTime() - limitInicio.getTime());
+        maxGapStart = limitInicio;
+        maxGapEnd = limitFim;
       } else {
         // Gap inicial (da data De do filtro até a primeira medição)
         const gapInicial = registrosMaq[0].date.getTime() - limitInicio.getTime();
         if (gapInicial > 0) {
           maxGapMs = gapInicial;
+          maxGapStart = limitInicio;
+          maxGapEnd = registrosMaq[0].date;
         }
 
         // Gaps entre medições sucessivas
@@ -278,6 +325,8 @@ export default function App() {
           const gap = registrosMaq[i].date.getTime() - registrosMaq[i - 1].date.getTime();
           if (gap > maxGapMs) {
             maxGapMs = gap;
+            maxGapStart = registrosMaq[i - 1].date;
+            maxGapEnd = registrosMaq[i].date;
           }
         }
 
@@ -285,23 +334,68 @@ export default function App() {
         const gapFinal = limitFim.getTime() - registrosMaq[registrosMaq.length - 1].date.getTime();
         if (gapFinal > maxGapMs) {
           maxGapMs = gapFinal;
+          maxGapStart = registrosMaq[registrosMaq.length - 1].date;
+          maxGapEnd = limitFim;
         }
       }
 
       return {
         maquina: maq,
         maxGapMs,
+        maxGapStart,
+        maxGapEnd,
         hasMedicoes: registrosMaq.length > 0,
         totalMedicoes: registrosMaq.length
       };
-    }).sort((a, b) => b.maxGapMs - a.maxGapMs);
+    });
+
+    // Filtra máquinas que têm zero medições de acordo com a FOTO 3
+    const ociosidadePorMaquina = ociosidadePorMaquinaTotal
+      .filter(item => item.totalMedicoes > 0)
+      .sort((a, b) => b.maxGapMs - a.maxGapMs);
+
+    // Helpers de formatação
+    const formatarMsParaTempo = (ms: number) => {
+      if (ms <= 0) return "0 min";
+      const totalMinutos = Math.floor(ms / (1000 * 60));
+      const totalHoras = Math.floor(totalMinutos / 60);
+      const dias = Math.floor(totalHoras / 24);
+      const horasRestantes = totalHoras % 24;
+      const minutosRestantes = totalMinutos % 60;
+      
+      const partes: string[] = [];
+      if (dias > 0) partes.push(`${dias}d`);
+      if (horasRestantes > 0 || dias > 0) partes.push(`${horasRestantes}h`);
+      partes.push(`${minutosRestantes}m`);
+      
+      return partes.join(" ");
+    };
+
+    const formatarDateTimeDiscreto = (d: Date | null) => {
+      if (!d) return "";
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const hour = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return `${day}/${month} ${hour}:${min}`;
+    };
+
+    // Detalhes do maior intervalo de medição (FOTO 2) entre as máquinas ativas
+    const absoluteMaxGapItem = ociosidadePorMaquina[0] || null;
+    const infoIntervaloMaximo = absoluteMaxGapItem ? {
+      maquina: absoluteMaxGapItem.maquina,
+      tempoFormatado: formatarMsParaTempo(absoluteMaxGapItem.maxGapMs),
+      inicioFormatado: formatarDateTimeDiscreto(absoluteMaxGapItem.maxGapStart),
+      fimFormatado: formatarDateTimeDiscreto(absoluteMaxGapItem.maxGapEnd),
+    } : null;
 
     return {
       rankingNCs,
       ociosidadePorMaquina,
+      infoIntervaloMaximo,
       totalRegistrosPeriodo: registrosSetorPeriodo.length
     };
-  }, [registrosCompletos, setorSelecionado, maquinas, dataFiltroEstDe, dataFiltroEstAte]);
+  }, [registrosCompletos, setorSelecionado, maquinas, dataFiltroEstDe, dataFiltroEstAte, horaFiltroEstDe, horaFiltroEstAte]);
 
   // Estados para diálogos customizados (Evitando prompt, confirm, alert nativos que travam em iframes)
   const [modalSenhaOpen, setModalSenhaOpen] = useState(false);
@@ -1984,29 +2078,87 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Filtros de data */}
-                    <div className="bg-slate-950/40 p-4 rounded-2xl border border-slate-900 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <Calendar size={12} className="text-indigo-400" /> DE (DATA INÍCIO):
-                        </label>
-                        <input
-                          type="date"
-                          value={dataFiltroEstDe}
-                          onChange={e => setDataFiltroEstDe(e.target.value)}
-                          className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-4 py-3 text-sm font-bold text-white transition-all"
-                        />
+                    {/* Filtros de data/hora e Painel de Intervalo Máximo */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Filtros */}
+                      <div className="bg-slate-950/40 p-4 rounded-2xl border border-slate-900 grid grid-cols-1 sm:grid-cols-2 gap-4 lg:col-span-2">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Calendar size={12} className="text-indigo-400" /> DE (DATA):
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="date"
+                              value={dataFiltroEstDe}
+                              onChange={e => setDataFiltroEstDe(e.target.value)}
+                              className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-3 py-2 text-xs font-bold text-white transition-all"
+                            />
+                            <input
+                              type="time"
+                              value={horaFiltroEstDe}
+                              onChange={e => setHoraFiltroEstDe(e.target.value)}
+                              className="w-[110px] bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-2 py-2 text-xs font-bold text-white transition-all text-center"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Calendar size={12} className="text-indigo-400" /> ATÉ (DATA):
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="date"
+                              value={dataFiltroEstAte}
+                              onChange={e => setDataFiltroEstAte(e.target.value)}
+                              className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-3 py-2 text-xs font-bold text-white transition-all"
+                            />
+                            <input
+                              type="time"
+                              value={horaFiltroEstAte}
+                              onChange={e => setHoraFiltroEstAte(e.target.value)}
+                              className="w-[110px] bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-2 py-2 text-xs font-bold text-white transition-all text-center"
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="space-y-1.5">
-                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                          <Calendar size={12} className="text-indigo-400" /> ATÉ (DATA FIM):
-                        </label>
-                        <input
-                          type="date"
-                          value={dataFiltroEstAte}
-                          onChange={e => setDataFiltroEstAte(e.target.value)}
-                          className="w-full bg-slate-900 border-2 border-slate-800 focus:border-indigo-500 focus:outline-none rounded-xl px-4 py-3 text-sm font-bold text-white transition-all"
-                        />
+
+                      {/* Painelzinho de Intervalo Máximo (FOTO 2) */}
+                      <div className="bg-indigo-950/20 p-4 rounded-2xl border border-indigo-900/50 flex flex-col justify-between">
+                        <div>
+                          <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <Clock size={12} className="text-indigo-400" /> MAIOR INTERVALO SEM MEDIÇÃO
+                          </div>
+                          <div className="text-xs text-slate-400 mt-1 font-medium">
+                            {estatisticasCalculadas.infoIntervaloMaximo 
+                              ? `Máquina com maior intervalo sem medir no período filtrado:` 
+                              : "Sem medições registradas no período filtrado."}
+                          </div>
+                        </div>
+
+                        {estatisticasCalculadas.infoIntervaloMaximo ? (
+                          <div className="mt-3 space-y-1">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">MÁQUINA:</span>
+                              <span className="text-sm font-black text-indigo-300 font-mono">
+                                {estatisticasCalculadas.infoIntervaloMaximo.maquina}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline justify-between border-t border-indigo-950/40 pt-1">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">INTERVALO MÁX:</span>
+                              <span className="text-sm font-black text-amber-400 font-mono">
+                                {estatisticasCalculadas.infoIntervaloMaximo.tempoFormatado}
+                              </span>
+                            </div>
+                            <div className="text-[9px] text-slate-400 text-right font-semibold pt-1 italic">
+                              Período: {estatisticasCalculadas.infoIntervaloMaximo.inicioFormatado} às {estatisticasCalculadas.infoIntervaloMaximo.fimFormatado}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs font-bold text-slate-500 uppercase mt-4 italic">
+                            Nenhuma máquina ativa encontrada.
+                          </div>
+                        )}
                       </div>
                     </div>
 
