@@ -42,6 +42,7 @@ export interface NCPendente {
   maquina: string;
   hora: string;
   data: string;
+  codigoPeca?: string;
 }
 
 export interface HistoricoItem {
@@ -52,6 +53,8 @@ export interface HistoricoItem {
   responsavel: string;
   colaborador?: string;
   solucao: string;
+  codigoPeca?: string;
+  quemResolveu?: string;
 }
 
 export interface MonitoramentoResponse {

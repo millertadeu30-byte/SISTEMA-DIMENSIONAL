@@ -1867,7 +1867,9 @@ export default function App() {
                             `maq ${item.maquina.toLowerCase()}`.includes(query) ||
                             item.problema.toLowerCase().includes(query) ||
                             item.responsavel.toLowerCase().includes(query) ||
-                            (item.solucao && item.solucao.toLowerCase().includes(query))
+                            (item.solucao && item.solucao.toLowerCase().includes(query)) ||
+                            (item.codigoPeca && item.codigoPeca.toLowerCase().includes(query)) ||
+                            (item.quemResolveu && item.quemResolveu.toLowerCase().includes(query))
                           );
 
                           if (!dataFiltroHistorico) return matchesText;
@@ -1909,6 +1911,16 @@ export default function App() {
                                 <div className="text-slate-400">
                                   <span className="font-bold">COMUNICADO PARA:</span> <span className="text-orange-400 font-bold">{item.responsavel}</span>
                                 </div>
+                                {item.codigoPeca && item.codigoPeca !== "-" && (
+                                  <div className="text-slate-400">
+                                    <span className="font-bold">CÓD. ALTERNATIVO:</span> <span className="text-cyan-400 font-bold">{item.codigoPeca}</span>
+                                  </div>
+                                )}
+                                {item.quemResolveu && (
+                                  <div className="text-slate-400">
+                                    <span className="font-bold">RESOLVIDO POR:</span> <span className="text-emerald-400 font-bold">{item.quemResolveu}</span>
+                                  </div>
+                                )}
                                 <div className="text-slate-300 pt-1 border-t border-slate-900/60 mt-1">
                                   <span className="font-bold text-slate-400">SOLUÇÃO:</span> {item.solucao || "-"}
                                 </div>
@@ -1959,7 +1971,7 @@ export default function App() {
                             <span className="bg-red-950/80 text-red-400 border border-red-900/50 px-2.5 py-0.5 rounded text-[10px] font-mono tracking-wider font-bold">
                               MAQ: {nc.maquina} | {nc.data} às {nc.hora}
                             </span>
-                            <div className="text-slate-400 text-xs font-bold uppercase mt-2 flex flex-col gap-1 sm:flex-row sm:gap-4">
+                            <div className="text-slate-400 text-xs font-bold uppercase mt-2 flex flex-wrap gap-1 sm:gap-x-4 items-center">
                               <div>
                                 Identificado por: <span className="text-red-400 font-black">{nc.colaborador || "NÃO INFORMADO"}</span>
                               </div>
@@ -1967,6 +1979,14 @@ export default function App() {
                               <div>
                                 Comunicado para: <span className="text-orange-400 font-black">{nc.responsavel}</span>
                               </div>
+                              {nc.codigoPeca && nc.codigoPeca !== "-" && (
+                                <>
+                                  <div className="hidden sm:block text-slate-600">|</div>
+                                  <div>
+                                    Cód. Alternativo: <span className="text-cyan-400 font-black">{nc.codigoPeca}</span>
+                                  </div>
+                                </>
+                              )}
                             </div>
                             <div className="text-lg font-black text-slate-100 mt-1 uppercase">
                               {nc.problema}

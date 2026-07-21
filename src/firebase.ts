@@ -329,7 +329,8 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
         problema: r.naoConformidade,
         maquina: r.maquina,
         hora: r.hora.substring(0, 5),
-        data: r.data
+        data: r.data,
+        codigoPeca: r.codigoPeca || "-"
       });
     }
 
@@ -344,7 +345,9 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
         problema: textoNC,
         responsavel: r.responsavel || "NÃO INFORMADO",
         colaborador: r.colaborador || "NÃO INFORMADO",
-        solucao: solucaoCompleta
+        solucao: solucaoCompleta,
+        codigoPeca: r.codigoPeca || "-",
+        quemResolveu: r.quemResolveu || ""
       });
     }
   });
