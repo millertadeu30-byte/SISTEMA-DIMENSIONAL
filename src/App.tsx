@@ -58,6 +58,7 @@ import {
   fbLiberarDivergencia,
   fbObterTodosRegistros,
   fbExcluirRegistro,
+  fbExcluirDivergenciasMaquinaHoje,
   fbAdicionarComentario
 } from "./firebase";
 
@@ -987,12 +988,12 @@ export default function App() {
   };
 
   // Exclui uma divergência (mudar/remover registro) direto do painel do supervisor
-  const excluirDivergenciaPeloSupervisor = async (linha: any) => {
+  const excluirDivergenciaPeloSupervisor = async (maquina: string) => {
     solicitarConfirmacao("DESEJA EXCLUIR ESTE REGISTRO DE DIVERGÊNCIA?", async () => {
       setLoadingText("EXCLUINDO REGISTRO...");
       setStep("loading");
       try {
-        await fbExcluirRegistro(linha);
+        await fbExcluirDivergenciasMaquinaHoje(maquina, setorSelecionado?.id);
         resetarFluxo();
       } catch (e) {
         console.error(e);
@@ -2650,7 +2651,7 @@ export default function App() {
                           {/* Campo para Inserir/Editar Comentário */}
                           <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/60 space-y-2">
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                              Adicionar / Alterar Comentário do Supervisor
+                              COMENTÁRIO
                             </label>
                             <div className="flex gap-2">
                               <input
@@ -2683,7 +2684,7 @@ export default function App() {
                               <CheckCircle2 size={14} /> LIBERAR MÁQUINA (RESOLVER)
                             </button>
                             <button
-                              onClick={() => excluirDivergenciaPeloSupervisor(d.linha!)}
+                              onClick={() => excluirDivergenciaPeloSupervisor(d.maq)}
                               className="bg-red-700 hover:bg-red-600 text-white font-black py-3.5 rounded-xl text-xs transition transform active:scale-95 flex items-center justify-center gap-1.5 shadow"
                             >
                               <Trash2 size={14} /> DELETAR DIVERGÊNCIA

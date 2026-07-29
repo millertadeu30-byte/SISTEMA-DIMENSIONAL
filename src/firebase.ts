@@ -425,9 +425,21 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
     };
   });
 
-  snapshot.forEach(docSnap => {
-    const r = docSnap.data() as Registro;
-    const docId = docSnap.id;
+  // Sort today's records chronologically to prevent random state flipping
+  const docs = snapshot.docs.map(docSnap => ({
+    id: docSnap.id,
+    data: docSnap.data() as Registro
+  }));
+  docs.sort((a, b) => {
+    const tA = a.data.timestamp || 0;
+    const tB = b.data.timestamp || 0;
+    if (tA !== tB) {
+      return tA - tB;
+    }
+    return (a.data.hora || "").localeCompare(b.data.hora || "");
+  });
+
+  docs.forEach(({ id, data: r }) => {
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) return;
 
@@ -449,7 +461,7 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
 
     if (statusDMM === "NÃO") {
       estadoMaq[maq].divergencia = true;
-      estadoMaq[maq].linha = docId;
+      estadoMaq[maq].linha = id;
       estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
       if (motivo !== "" && motivo !== "-") {
         estadoMaq[maq].motivo = motivo;
@@ -561,6 +573,30 @@ export async function fbObterTodosRegistros(setorId?: string): Promise<any[]> {
 
 export async function fbExcluirRegistro(docId: string): Promise<void> {
   await deleteDoc(doc(db, "registros", docId));
+}
+
+export async function fbExcluirDivergenciasMaquinaHoje(maquina: string, setorId?: string): Promise<void> {
+  const { data: hojeStr } = getFormatoBrasil();
+  const q = query(
+    collection(db, "registros"),
+    where("data", "==", hojeStr),
+    where("maquina", "==", maquina.toUpperCase())
+  );
+  const snapshot = await getDocs(q);
+  const batch = writeBatch(db);
+  let count = 0;
+  snapshot.forEach(docSnap => {
+    const r = docSnap.data() as Registro;
+    const rSetorId = r.setorId || "t-automatico";
+    const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "";
+    if ((!setorId || rSetorId === setorId) && statusDMM === "NÃO") {
+      batch.delete(docSnap.ref);
+      count++;
+    }
+  });
+  if (count > 0) {
+    await batch.commit();
+  }
 }
 
 export async function fbAdicionarComentario(docId: string, comentario: string): Promise<void> {
