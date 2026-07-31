@@ -67,7 +67,7 @@ function parseHoraParaMinutos(horaStr: string): number {
 
 export function isOfflineMode(): boolean {
   if (localStorage.getItem("modoOfflineLocal") === null) {
-    localStorage.setItem("modoOfflineLocal", "true");
+    localStorage.setItem("modoOfflineLocal", "false");
     
     // Semente de setores se estiver vazio
     if (!localStorage.getItem("local_setores")) {
@@ -75,14 +75,14 @@ export function isOfflineMode(): boolean {
         {
           id: "dimensional-t-automatico",
           titulo: "DIMENSIONAL T.AUTOMÁTICO",
-          senha: "",
+          senha: "1234",
           maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
           colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
         },
         {
           id: "dimensional-t-cnc",
           titulo: "DIMENSIONAL T.CNC",
-          senha: "",
+          senha: "1234",
           maquinas: ["04", "06", "07", "08", "09"],
           colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
         }
@@ -150,14 +150,14 @@ export function fbAtivarModoOffline(): void {
       {
         id: "dimensional-t-automatico",
         titulo: "DIMENSIONAL T.AUTOMÁTICO",
-        senha: "",
+        senha: "1234",
         maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
         colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
       },
       {
         id: "dimensional-t-cnc",
         titulo: "DIMENSIONAL T.CNC",
-        senha: "",
+        senha: "1234",
         maquinas: ["04", "06", "07", "08", "09"],
         colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
       }
@@ -257,7 +257,7 @@ export async function inicializarBancoFirebase() {
       await setDoc(doc(db, "setores", "dimensional-t-automatico"), {
         id: "dimensional-t-automatico",
         titulo: "DIMENSIONAL T.AUTOMÁTICO",
-        senha: "",
+        senha: "1234",
         maquinas: maqsTAuto,
         colaboradores: colabsTAuto
       });
@@ -266,7 +266,7 @@ export async function inicializarBancoFirebase() {
       await setDoc(doc(db, "setores", "dimensional-t-cnc"), {
         id: "dimensional-t-cnc",
         titulo: "DIMENSIONAL T.CNC",
-        senha: "",
+        senha: "1234",
         maquinas: maqsTCnc,
         colaboradores: colabsTCnc
       });
@@ -324,6 +324,27 @@ export async function inicializarBancoFirebase() {
         await addDoc(collection(db, "registros"), reg);
       }
       console.log("Firestore successfully seeded with default data!");
+    } else {
+      // Auto-migrate: check if default sectors exist and have blank passwords, and if so, set them to "1234"
+      const tAutoRef = doc(db, "setores", "dimensional-t-automatico");
+      const tAutoDoc = await getDoc(tAutoRef);
+      if (tAutoDoc.exists()) {
+        const data = tAutoDoc.data();
+        if (!data.senha || data.senha === "") {
+          console.log("Updating password for dimensional-t-automatico to 1234...");
+          await updateDoc(tAutoRef, { senha: "1234" });
+        }
+      }
+
+      const tCncRef = doc(db, "setores", "dimensional-t-cnc");
+      const tCncDoc = await getDoc(tCncRef);
+      if (tCncDoc.exists()) {
+        const data = tCncDoc.data();
+        if (!data.senha || data.senha === "") {
+          console.log("Updating password for dimensional-t-cnc to 1234...");
+          await updateDoc(tCncRef, { senha: "1234" });
+        }
+      }
     }
   } catch (err) {
     console.error("Error seeding Firestore:", err);
