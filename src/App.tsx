@@ -59,13 +59,24 @@ import {
   fbObterTodosRegistros,
   fbExcluirRegistro,
   fbExcluirDivergenciasMaquinaHoje,
-  fbAdicionarComentario
+  fbAdicionarComentario,
+  isOfflineMode,
+  fbAtivarModoOffline,
+  fbDesativarModoOffline,
+  fbExportarBackup,
+  fbImportarBackup
 } from "./firebase";
 
 export default function App() {
   // Estados de navegação e fluxos
   const [step, setStep] = useState<number | "loading" | "historico" | "resolverNC" | "liberarDiv" | "config" | "registros" | "estatisticas">(1);
   const [loadingText, setLoadingText] = useState("CARREGANDO...");
+
+  // Estados para modo offline e backups
+  const [offlineMode, setOfflineMode] = useState(() => isOfflineMode());
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [backupTextarea, setBackupTextarea] = useState("");
+  const [importFileError, setImportFileError] = useState("");
 
   // Estados para estatísticas
   const [dataFiltroEstDe, setDataFiltroEstDe] = useState<string>(() => {
@@ -105,6 +116,7 @@ export default function App() {
   // Estados de setores e ADM
   const [setores, setSetores] = useState<Setor[]>([]);
   const [setorSelecionado, setSetorSelecionado] = useState<Setor | null>(null);
+  const [dbError, setDbError] = useState<"quota" | "generic" | null>(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [adminSenhaInput, setAdminSenhaInput] = useState("");
   const [adminError, setAdminError] = useState("");
@@ -430,6 +442,7 @@ export default function App() {
     try {
       const data = await fbObterSetores();
       setSetores(data);
+      setDbError(null);
       
       const savedSetorId = localStorage.getItem("setorAtivoId");
       if (savedSetorId && !setorSelecionado) {
@@ -441,8 +454,14 @@ export default function App() {
           carregarMonitoramento(found.id);
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Erro ao carregar setores:", e);
+      const errStr = String(e?.message || e);
+      if (errStr.includes("Quota") || errStr.includes("quota") || errStr.includes("resource-exhausted") || e?.code === "resource-exhausted") {
+        setDbError("quota");
+      } else {
+        setDbError("generic");
+      }
     }
   };
 
@@ -648,21 +667,13 @@ export default function App() {
     };
   }, []);
 
-  // Monitoramento secundário e autoreload de 60 segundos
+  // Carrega os dados sob demanda quando o setor selecionado muda
   useEffect(() => {
-    if (!setorSelecionado) return;
-
-    carregarCadastro(setorSelecionado.id);
-    carregarAlertas(setorSelecionado.id);
-    carregarMonitoramento(setorSelecionado.id);
-
-    const intervalMonitor = setInterval(() => {
+    if (setorSelecionado) {
+      carregarCadastro(setorSelecionado.id);
+      carregarAlertas(setorSelecionado.id);
       carregarMonitoramento(setorSelecionado.id);
-    }, 60000);
-
-    return () => {
-      clearInterval(intervalMonitor);
-    };
+    }
   }, [setorSelecionado]);
 
   // Busca dados de cadastro
@@ -710,6 +721,71 @@ export default function App() {
       setDesvios(data.desvios || []);
     } catch (e) {
       console.error("Erro ao carregar monitoramento:", e);
+    }
+  };
+
+  const ativarModoOfflineLocal = () => {
+    fbAtivarModoOffline();
+    setOfflineMode(true);
+    setDbError(null);
+    // Reload everything
+    carregarSetores();
+    if (setorSelecionado) {
+      carregarCadastro(setorSelecionado.id);
+      carregarAlertas(setorSelecionado.id);
+      carregarMonitoramento(setorSelecionado.id);
+    }
+    alert("MODO OFFLINE ATIVADO COM SUCESSO! SEUS DADOS AGORA SERÃO SALVOS DE FORMA SEGURA E TOTALMENTE GRATUITA NO SEU NAVEGADOR.");
+  };
+
+  const desativarModoOfflineLocal = () => {
+    fbDesativarModoOffline();
+    setOfflineMode(false);
+    // Reload everything
+    carregarSetores();
+    if (setorSelecionado) {
+      carregarCadastro(setorSelecionado.id);
+      carregarAlertas(setorSelecionado.id);
+      carregarMonitoramento(setorSelecionado.id);
+    }
+    alert("MODO OFFLINE DESATIVADO. O SISTEMA ESTÁ SE CONECTANDO AO BANCO DE DADOS FIREBASE EM NUVEM.");
+  };
+
+  const exportarDadosParaTexto = () => {
+    try {
+      const backupJson = fbExportarBackup();
+      setBackupTextarea(backupJson);
+      // Also download as a file automatically!
+      const blob = new Blob([backupJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `backup_controle_dimensional_${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao exportar dados.");
+    }
+  };
+
+  const importarDadosDeTexto = (jsonStr: string) => {
+    try {
+      fbImportarBackup(jsonStr);
+      setImportFileError("");
+      setShowBackupModal(false);
+      // Reload everything
+      carregarSetores();
+      if (setorSelecionado) {
+        carregarCadastro(setorSelecionado.id);
+        carregarAlertas(setorSelecionado.id);
+        carregarMonitoramento(setorSelecionado.id);
+      }
+      alert("BACKUP IMPORTADO COM SUCESSO! TODOS OS SEUS SETORES E REGISTROS FORAM RESTAURADOS.");
+    } catch (e: any) {
+      setImportFileError(e?.message || "FORMATO DE BACKUP INVÁLIDO. VERIFIQUE O TEXTO COPIADO.");
     }
   };
 
@@ -924,15 +1000,23 @@ export default function App() {
   };
 
   // Libera divergência de máquina (Supervisor)
-  const liberarDivergenciaOnServer = async (maquina: string) => {
+  const liberarDivergenciaOnServer = async (docId: string, maquina: string) => {
     setLoadingText("LIBERANDO MÁQUINA...");
     setStep("loading");
     try {
-      await fbLiberarDivergencia(maquina, "SUPERVISOR", setorSelecionado?.id);
-      resetarFluxo();
+      await fbLiberarDivergencia(docId, maquina, "SUPERVISOR", setorSelecionado?.id);
+      if (setorSelecionado) {
+        await carregarAlertas(setorSelecionado.id);
+        await carregarMonitoramento(setorSelecionado.id);
+      }
+      setStep("liberarDiv");
     } catch (e) {
       console.error(e);
       alert("Erro ao liberar máquina.");
+      if (setorSelecionado) {
+        await carregarAlertas(setorSelecionado.id);
+        await carregarMonitoramento(setorSelecionado.id);
+      }
       setStep("liberarDiv");
     }
   };
@@ -983,10 +1067,18 @@ export default function App() {
     setStep("loading");
     try {
       await fbAdicionarComentario(linha, comentario);
-      resetarFluxo();
+      if (setorSelecionado) {
+        await carregarAlertas(setorSelecionado.id);
+        await carregarMonitoramento(setorSelecionado.id);
+      }
+      setStep("liberarDiv");
     } catch (e) {
       console.error(e);
       alert("Erro ao salvar comentário do supervisor.");
+      if (setorSelecionado) {
+        await carregarAlertas(setorSelecionado.id);
+        await carregarMonitoramento(setorSelecionado.id);
+      }
       setStep("liberarDiv");
     }
   };
@@ -998,10 +1090,18 @@ export default function App() {
       setStep("loading");
       try {
         await fbExcluirDivergenciasMaquinaHoje(maquina, setorSelecionado?.id);
-        resetarFluxo();
+        if (setorSelecionado) {
+          await carregarAlertas(setorSelecionado.id);
+          await carregarMonitoramento(setorSelecionado.id);
+        }
+        setStep("liberarDiv");
       } catch (e) {
         console.error(e);
         alert("Erro ao excluir divergência.");
+        if (setorSelecionado) {
+          await carregarAlertas(setorSelecionado.id);
+          await carregarMonitoramento(setorSelecionado.id);
+        }
         setStep("liberarDiv");
       }
     });
@@ -1286,6 +1386,51 @@ export default function App() {
 
       {/* Conteúdo Principal */}
       <main className="max-w-7xl mx-auto px-4 mt-6">
+
+        {/* Alerta de erro de quota ou erro genérico do banco */}
+        {dbError && (
+          <div className="mb-6 bg-red-950/40 border border-red-900/60 p-6 rounded-3xl text-left shadow-lg">
+            <div className="flex gap-4">
+              <div className="bg-red-900/40 border border-red-800 p-3 rounded-2xl h-12 w-12 flex items-center justify-center text-red-400 shrink-0">
+                <AlertTriangle size={24} className="animate-pulse" />
+              </div>
+              <div className="space-y-2 flex-1">
+                <h3 className="text-base font-black tracking-wider text-red-400 uppercase">
+                  {dbError === "quota" ? "⚠️ LIMITE DE COTA DO BANCO DE DADOS ALCANÇADO" : "⚠️ ERRO DE CONEXÃO COM O BANCO DE DADOS"}
+                </h3>
+                <div className="text-xs text-slate-300 font-bold uppercase leading-relaxed">
+                  {dbError === "quota" ? (
+                    <>
+                      Seus dados, planilhas e registros anteriores estão <strong className="text-emerald-400">totalmente seguros e intactos</strong> no banco de dados. No entanto, o limite diário de leitura gratuita do Firestore para hoje foi excedido.
+                      <span className="block mt-2 text-slate-400 font-medium">
+                        O Firebase restabelecerá o acesso automaticamente à meia-noite (fuso horário do servidor). Você pode ativar o Modo Offline Gratuito para continuar trabalhando agora mesmo!
+                      </span>
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={ativarModoOfflineLocal}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          ⚡ ATIVAR MODO OFFLINE GRATUITO AGORA (SALVAR LOCAL)
+                        </button>
+                        <a 
+                          href="https://console.firebase.google.com/project/gen-lang-client-0844737316/firestore/databases/ai-studio-controledimensio-6e3c047d-fc65-4f73-85b9-7a4b143c1b74/data?openUpgradeDialog=true"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 font-black px-4 py-2.5 rounded-xl text-xs transition uppercase cursor-pointer"
+                        >
+                          Acessar Console do Firebase ↗
+                        </a>
+                      </div>
+                    </>
+                  ) : (
+                    "Ocorreu um erro ao conectar com o banco de dados Firebase. Por favor, verifique a sua conexão com a internet ou atualize a página."
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
           {/* Painel Central / Fluxo */}
@@ -2387,6 +2532,70 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Barra de Sincronização e Modo Offline (Apenas Admin) */}
+                    {isAdmin && (
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-md">
+                        <div className="flex items-center gap-3">
+                          {offlineMode ? (
+                            <div className="flex items-center gap-2">
+                              <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
+                              <span className="text-xs md:text-sm font-black font-mono tracking-wide text-emerald-400 uppercase">
+                                🟢 MODO LOCAL ATIVADO (100% GRATUITO & ILIMITADO)
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span className="h-3 w-3 rounded-full bg-blue-500" />
+                              <span className="text-xs md:text-sm font-black font-mono tracking-wide text-blue-400 uppercase">
+                                🔵 CONECTADO EM NUVEM (FIREBASE CLOUD)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {offlineMode ? (
+                            <>
+                              <button
+                                onClick={exportarDadosParaTexto}
+                                className="bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/50 hover:border-emerald-700/60 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                                title="Fazer backup/exportar registros e setores locais"
+                              >
+                                <History size={14} /> EXPORTAR BACKUP (.JSON)
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setImportFileError("");
+                                  setBackupTextarea("");
+                                  setShowBackupModal(true);
+                                }}
+                                className="bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-750 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
+                                title="Importar dados e setores salvos anteriormente"
+                              >
+                                <Settings size={14} /> IMPORTAR BACKUP
+                              </button>
+                              <button
+                                onClick={desativarModoOfflineLocal}
+                                className="bg-red-950/40 hover:bg-red-900/40 text-red-400 border border-red-900/50 hover:border-red-800/60 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider cursor-pointer"
+                                title="Voltar a usar o Firebase Cloud"
+                              >
+                                CONECTAR CLOUD
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={ativarModoOfflineLocal}
+                                className="bg-emerald-600 hover:bg-emerald-700 hover:scale-[1.02] active:scale-[0.98] text-white font-black text-[10px] sm:text-xs px-4 py-2.5 rounded-xl transition duration-150 uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer"
+                                title="Salvar dados localmente no navegador de forma ilimitada e gratuita"
+                              >
+                                ⚡ ATIVAR MODO LOCAL OFFLINE (GRATUITO)
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className={`grid grid-cols-1 gap-6 ${
                       setorSelecionado 
                         ? (isAdmin ? "md:grid-cols-2 lg:grid-cols-3" : "md:grid-cols-2") 
@@ -2681,17 +2890,17 @@ export default function App() {
                               <input
                                 type="text"
                                 placeholder="EX: AJUSTADO PARAMETROS DO PROCESSO NA MAQUINA"
-                                value={comentariosDivergencia[d.linha!] ?? ""}
+                                value={comentariosDivergencia[d.linha!] !== undefined ? comentariosDivergencia[d.linha!] : (d.comentarioSupervisor || "")}
                                 onChange={e => setComentariosDivergencia(prev => ({ ...prev, [d.linha!]: e.target.value }))}
                                 onKeyDown={e => {
                                   if (e.key === "Enter") {
-                                    salvarComentarioSupervisor(d.linha!, comentariosDivergencia[d.linha!] ?? "");
+                                    salvarComentarioSupervisor(d.linha!, comentariosDivergencia[d.linha!] !== undefined ? comentariosDivergencia[d.linha!] : (d.comentarioSupervisor || ""));
                                   }
                                 }}
                                 className="flex-1 bg-slate-900 border border-slate-800 focus:border-yellow-500 focus:outline-none rounded-xl px-3.5 py-2.5 text-xs text-white uppercase font-bold"
                               />
                               <button
-                                onClick={() => salvarComentarioSupervisor(d.linha!, comentariosDivergencia[d.linha!] ?? "")}
+                                onClick={() => salvarComentarioSupervisor(d.linha!, comentariosDivergencia[d.linha!] !== undefined ? comentariosDivergencia[d.linha!] : (d.comentarioSupervisor || ""))}
                                 className="bg-yellow-600 hover:bg-yellow-500 text-white font-black px-4 py-2.5 rounded-xl text-xs transition active:scale-95 whitespace-nowrap shadow"
                               >
                                 SALVAR
@@ -2702,7 +2911,7 @@ export default function App() {
                           {/* Ações de Liberação e Exclusão */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
                             <button
-                              onClick={() => liberarDivergenciaOnServer(d.maq)}
+                              onClick={() => liberarDivergenciaOnServer(d.linha || "", d.maq)}
                               className="bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3.5 rounded-xl text-xs transition transform active:scale-95 flex items-center justify-center gap-1.5 shadow"
                             >
                               <CheckCircle2 size={14} /> LIBERAR MÁQUINA (RESOLVER)
@@ -3509,9 +3718,96 @@ export default function App() {
                   setModalResolvidoPorOpen(false);
                   setRegistroSelecionadoParaResolvidoPor(null);
                 }}
-                className="w-full bg-slate-950 border border-slate-800 hover:bg-slate-900 text-slate-450 hover:text-white font-bold py-3.5 rounded-2xl text-xs transition uppercase cursor-pointer"
+                className="w-full bg-slate-950 border border-slate-800 hover:bg-slate-900 text-slate-455 hover:text-white font-bold py-3.5 rounded-2xl text-xs transition uppercase cursor-pointer"
               >
                 Voltar / Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Backup / Importação de dados offline */}
+      {showBackupModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+          <div className="bg-slate-900 border-2 border-slate-800 rounded-3xl p-6 w-full max-w-2xl shadow-2xl text-left space-y-4 animate-in fade-in zoom-in duration-150 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-2.5 text-emerald-500 border-b border-slate-800 pb-3">
+              <History size={22} />
+              <h3 className="text-lg font-black uppercase tracking-wider">Gerenciador de Backups Locais</h3>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-xs text-slate-350 font-bold uppercase leading-relaxed">
+                Abaixo está o conteúdo JSON do seu backup local. Você pode copiar o código para salvar o seu histórico ou colar um código de backup antigo para restaurar seus dados.
+              </p>
+
+              <div>
+                <label className="block text-[11px] font-black text-slate-400 uppercase mb-1.5">Código do Backup (JSON)</label>
+                <textarea
+                  rows={8}
+                  value={backupTextarea}
+                  onChange={e => {
+                    setBackupTextarea(e.target.value);
+                    setImportFileError("");
+                  }}
+                  placeholder="Cole aqui o conteúdo de um arquivo .json de backup exportado anteriormente..."
+                  className="w-full bg-slate-950 border-2 border-slate-850 focus:border-emerald-500 focus:outline-none rounded-2xl p-4 text-[11px] font-mono text-slate-200 leading-normal"
+                />
+              </div>
+
+              {importFileError && (
+                <p className="text-red-500 text-xs font-black uppercase">
+                  ⚠️ ERRO: {importFileError}
+                </p>
+              )}
+
+              <div className="bg-slate-950/40 border border-slate-800/60 p-4 rounded-xl space-y-2">
+                <p className="text-[11px] font-black text-slate-350 uppercase">Ou selecione um arquivo .json no seu computador:</p>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      try {
+                        const content = event.target?.result as string;
+                        setBackupTextarea(content);
+                        setImportFileError("");
+                      } catch (err) {
+                        setImportFileError("Erro ao ler o arquivo selecionado.");
+                      }
+                    };
+                    reader.readAsText(file);
+                  }}
+                  className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-750 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-slate-850">
+              <button
+                onClick={() => {
+                  setShowBackupModal(false);
+                  setBackupTextarea("");
+                  setImportFileError("");
+                }}
+                className="w-1/2 bg-slate-950 border border-slate-800 hover:bg-slate-900 text-slate-400 hover:text-white font-bold py-3 rounded-2xl text-xs transition uppercase cursor-pointer"
+              >
+                Fechar / Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  if (!backupTextarea.trim()) {
+                    setImportFileError("POR FAVOR, COLE O CÓDIGO DO BACKUP OU CARREGUE UM ARQUIVO .JSON PRIMEIRO.");
+                    return;
+                  }
+                  importarDadosDeTexto(backupTextarea);
+                }}
+                className="w-1/2 bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 rounded-2xl text-xs shadow-lg hover:shadow-emerald-900/30 transition uppercase cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Check size={14} /> Restaurar / Importar
               </button>
             </div>
           </div>

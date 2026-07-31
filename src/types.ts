@@ -36,7 +36,7 @@ export interface AlertasResponse {
 }
 
 export interface NCPendente {
-  linha: number;
+  linha: string | number;
   colaborador: string;
   responsavel: string;
   problema: string;
@@ -71,7 +71,7 @@ export interface ParadaItem {
 export interface DesvioItem {
   maq: string;
   motivo: string;
-  linha?: number;
+  linha?: string | number;
   comentarioSupervisor?: string;
   codAlternativo?: string;
 }
