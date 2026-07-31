@@ -12,6 +12,7 @@ import {
   query,
   orderBy,
   where,
+  limit,
   writeBatch
 } from "firebase/firestore";
 import { Setor, Registro, NCPendente, HistoricoItem, ParadaItem, DesvioItem } from "./types";
@@ -308,22 +309,24 @@ export async function fbRemoverMaquina(codigo: string, setorId?: string): Promis
 
 // 4. Alert/Monitoring and Measurement APIs
 export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: NCPendente[]; historico: HistoricoItem[] }> {
-  const snapshot = await getDocs(query(collection(db, "registros"), orderBy("timestamp", "asc")));
+  // 1. Get unresolved NCs (where solucao is "")
+  const pendingQuery = query(
+    collection(db, "registros"),
+    where("solucao", "==", "")
+  );
+  const pendingSnapshot = await getDocs(pendingQuery);
   const ncPendentes: NCPendente[] = [];
-  const historico: HistoricoItem[] = [];
-
-  snapshot.forEach(doc => {
-    const r = doc.data() as Registro;
-    const docId = doc.id;
+  
+  pendingSnapshot.forEach(docSnap => {
+    const r = docSnap.data() as Registro;
+    const docId = docSnap.id;
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) return;
 
     const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
-    const solucao = r.solucao ? r.solucao.trim() : "";
-
-    if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-" && solucao === "") {
+    if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-") {
       ncPendentes.push({
-        linha: docId as any, // ID of document as key
+        linha: docId as any,
         colaborador: r.colaborador || "NÃO INFORMADO",
         responsavel: r.responsavel || "NÃO INFORMADO",
         problema: r.naoConformidade,
@@ -333,12 +336,30 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
         codigoPeca: r.codigoPeca || "-"
       });
     }
+  });
 
+  // 2. Get the 150 most recent records for the general NC history tab
+  const historyQuery = query(
+    collection(db, "registros"),
+    orderBy("timestamp", "desc"),
+    limit(150)
+  );
+  const historySnapshot = await getDocs(historyQuery);
+  const rawHistory: any[] = [];
+  
+  historySnapshot.forEach(docSnap => {
+    const r = docSnap.data() as Registro;
+    const rSetorId = r.setorId || "t-automatico";
+    if (setorId && rSetorId !== setorId) return;
+
+    const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
+    const solucao = r.solucao ? r.solucao.trim() : "";
     const isProblem = textoNC !== "OK" && textoNC !== "-" && textoNC !== "";
+    
     if (isProblem) {
       const infoTroca = r.trocaFerramenta === "SIM" ? ` | TROCA: ${r.oQueTrocou} por ${r.quemTrocou}` : "";
       const solucaoCompleta = solucao ? `${solucao}${infoTroca}` : `PENDENTE${infoTroca}`;
-      historico.push({
+      rawHistory.push({
         data: r.data,
         hora: r.hora.substring(0, 5),
         maquina: r.maquina,
@@ -347,17 +368,26 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
         colaborador: r.colaborador || "NÃO INFORMADO",
         solucao: solucaoCompleta,
         codigoPeca: r.codigoPeca || "-",
-        quemResolveu: r.quemResolveu || ""
+        quemResolveu: r.quemResolveu || "",
+        timestamp: r.timestamp || 0
       });
     }
   });
+
+  // We sort/reverse to keep it ascending so the frontend's slice().reverse() makes it descending
+  const historico = rawHistory.sort((a, b) => a.timestamp - b.timestamp);
 
   return { ncPendentes, historico };
 }
 
 export async function fbObterUltimoMotivo(maquina: string, setorId?: string): Promise<string> {
-  // Query from last to first
-  const snapshot = await getDocs(query(collection(db, "registros"), orderBy("timestamp", "desc")));
+  // Query only the last 200 records across all machines (instead of ALL records of all time)
+  const q = query(
+    collection(db, "registros"),
+    orderBy("timestamp", "desc"),
+    limit(200)
+  );
+  const snapshot = await getDocs(q);
   let motivoEncontrado = "";
 
   for (const d of snapshot.docs) {
@@ -556,7 +586,12 @@ export async function fbLiberarDivergencia(maquina: string, colaboradorSuperviso
 }
 
 export async function fbObterTodosRegistros(setorId?: string): Promise<any[]> {
-  const snapshot = await getDocs(query(collection(db, "registros"), orderBy("timestamp", "asc")));
+  const q = query(
+    collection(db, "registros"),
+    orderBy("timestamp", "desc"),
+    limit(1500)
+  );
+  const snapshot = await getDocs(q);
   const list: any[] = [];
   snapshot.forEach(docSnap => {
     const r = docSnap.data() as Registro;
@@ -568,7 +603,7 @@ export async function fbObterTodosRegistros(setorId?: string): Promise<any[]> {
       });
     }
   });
-  return list;
+  return list.reverse();
 }
 
 export async function fbExcluirRegistro(docId: string): Promise<void> {

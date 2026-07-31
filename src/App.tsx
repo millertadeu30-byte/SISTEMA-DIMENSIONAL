@@ -647,7 +647,7 @@ export default function App() {
     };
   }, []);
 
-  // Monitoramento secundário e autoreload de 30 segundos
+  // Monitoramento secundário e autoreload de 60 segundos
   useEffect(() => {
     if (!setorSelecionado) return;
 
@@ -657,7 +657,7 @@ export default function App() {
 
     const intervalMonitor = setInterval(() => {
       carregarMonitoramento(setorSelecionado.id);
-    }, 30000);
+    }, 60000);
 
     return () => {
       clearInterval(intervalMonitor);
