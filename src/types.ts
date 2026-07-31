@@ -16,6 +16,7 @@ export interface Registro {
   oQueTrocou: string;
   quemTrocou: string;
   modeloPeca: string;
+  codAlternativo?: string; // Código alternativo da peça
   comentarioSupervisor?: string; // Comentário adicionado pelo supervisor
   quemResolveu?: string; // Nome do colaborador que resolveu a NC
   timestamp?: number; // Timestamp para ordenação
@@ -72,6 +73,7 @@ export interface DesvioItem {
   motivo: string;
   linha?: number;
   comentarioSupervisor?: string;
+  codAlternativo?: string;
 }
 
 export interface CadastroResponse {

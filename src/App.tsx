@@ -197,6 +197,7 @@ export default function App() {
   const [tempResp, setTempResp] = useState("");
 
   const [tempDMM, setTempDMM] = useState("");
+  const [tempCodAlternativo, setTempCodAlternativo] = useState("");
   const [tempTrocaOQue, setTempTrocaOQue] = useState("");
   const [tempTrocaQuem, setTempTrocaQuem] = useState("");
 
@@ -726,13 +727,15 @@ export default function App() {
       trocaFerramenta: "NÃO",
       oQueTrocou: "-",
       quemTrocou: "-",
-      modeloPeca: "-"
+      modeloPeca: "-",
+      codAlternativo: "-"
     });
     setTempNC("");
     setTempCod("");
     setTempModelo("");
     setTempResp("");
     setTempDMM("");
+    setTempCodAlternativo("");
     setTempTrocaOQue("");
     setTempTrocaQuem("");
     setBuscaColaborador("");
@@ -839,7 +842,8 @@ export default function App() {
     }
     setPayload(prev => ({
       ...prev,
-      motivoDMM: tempDMM.trim().toUpperCase()
+      motivoDMM: tempDMM.trim().toUpperCase(),
+      codAlternativo: tempCodAlternativo.trim().toUpperCase() || "-"
     }));
     setStep(5);
   };
@@ -1660,17 +1664,32 @@ export default function App() {
                           DESCREVER DIVERGÊNCIA / RASURA
                         </h3>
 
-                        <div>
-                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
-                            QUAL O DESVIO CONSTATADO? *
-                          </label>
-                          <input
-                            type="text"
-                            value={tempDMM}
-                            onChange={e => setTempDMM(e.target.value)}
-                            placeholder="EX: DESENHO SEM MEDIDA DO CHANFRO DE ENTRADA"
-                            className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 focus:outline-none rounded-xl px-4 py-3.5 text-base text-white font-bold uppercase placeholder:text-slate-600"
-                          />
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
+                              QUAL O DESVIO CONSTATADO? *
+                            </label>
+                            <input
+                              type="text"
+                              value={tempDMM}
+                              onChange={e => setTempDMM(e.target.value)}
+                              placeholder="EX: DESENHO SEM MEDIDA DO CHANFRO DE ENTRADA"
+                              className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 focus:outline-none rounded-xl px-4 py-3.5 text-base text-white font-bold uppercase placeholder:text-slate-600"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 tracking-wider">
+                              CÓD. ALTERNATIVO (OPCIONAL - DISCRETO)
+                            </label>
+                            <input
+                              type="text"
+                              value={tempCodAlternativo}
+                              onChange={e => setTempCodAlternativo(e.target.value)}
+                              placeholder="EX: COD-123"
+                              className="w-full md:w-1/2 bg-slate-950/40 border border-slate-800/80 focus:border-orange-500 focus:outline-none rounded-xl px-4 py-2.5 text-xs text-slate-300 font-bold uppercase placeholder:text-slate-700"
+                            />
+                          </div>
                         </div>
 
                         <div className="pt-4 flex gap-3">
@@ -2641,6 +2660,11 @@ export default function App() {
                             <div className="text-lg font-black text-slate-100 mt-2 uppercase">
                               MOTIVO: {d.motivo}
                             </div>
+                            {d.codAlternativo && d.codAlternativo !== "-" && (
+                              <div className="text-xs font-bold text-orange-400 mt-1 uppercase">
+                                CÓD. ALTERNATIVO: {d.codAlternativo}
+                              </div>
+                            )}
                             {d.comentarioSupervisor && (
                               <div className="mt-2.5 text-xs bg-slate-950/80 px-3.5 py-2.5 rounded-xl border border-slate-800 text-yellow-500 font-bold">
                                 💬 COMENTÁRIO DO SUPERVISOR: {d.comentarioSupervisor}
@@ -3101,6 +3125,13 @@ export default function App() {
                       <div className="text-slate-300 text-[11px] truncate uppercase pr-12">
                         {d.motivo}
                       </div>
+                      {d.codAlternativo && d.codAlternativo !== "-" && (
+                        <div className="text-[10px] text-orange-400 font-bold uppercase mt-1 flex items-center gap-1">
+                          <span className="bg-orange-950/50 border border-orange-900/40 px-1.5 py-0.5 rounded text-[9px]">
+                            CÓD. ALTERNATIVO: {d.codAlternativo}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {desvios.length === 0 && (

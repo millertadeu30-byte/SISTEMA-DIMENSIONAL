@@ -443,6 +443,7 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
       motivo: string;
       linha?: string;
       comentarioSupervisor?: string;
+      codAlternativo?: string;
     };
   } = {};
 
@@ -493,6 +494,7 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
       estadoMaq[maq].divergencia = true;
       estadoMaq[maq].linha = id;
       estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
+      estadoMaq[maq].codAlternativo = r.codAlternativo || "";
       if (motivo !== "" && motivo !== "-") {
         estadoMaq[maq].motivo = motivo;
       }
@@ -501,6 +503,7 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
       estadoMaq[maq].motivo = "";
       estadoMaq[maq].linha = undefined;
       estadoMaq[maq].comentarioSupervisor = undefined;
+      estadoMaq[maq].codAlternativo = undefined;
     }
   });
 
@@ -519,7 +522,8 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
         maq: m,
         motivo: estadoMaq[m].motivo || "Divergência",
         linha: estadoMaq[m].linha as any,
-        comentarioSupervisor: estadoMaq[m].comentarioSupervisor
+        comentarioSupervisor: estadoMaq[m].comentarioSupervisor,
+        codAlternativo: estadoMaq[m].codAlternativo
       });
     }
   });
@@ -546,6 +550,7 @@ export async function fbSalvarMedicao(dados: Partial<Registro>, setorId?: string
     oQueTrocou: dados.oQueTrocou || "-",
     quemTrocou: dados.quemTrocou || "-",
     modeloPeca: dados.modeloPeca || "-",
+    codAlternativo: (dados.codAlternativo || "-").toUpperCase(),
     timestamp: Date.now()
   };
   await addDoc(collection(db, "registros"), novoRegistro);
