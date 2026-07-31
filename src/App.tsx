@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Settings,
@@ -445,13 +445,16 @@ export default function App() {
       setDbError(null);
       
       const savedSetorId = localStorage.getItem("setorAtivoId");
-      if (savedSetorId && !setorSelecionado) {
-        const found = data.find(s => s.id === savedSetorId);
+      const activeId = setorSelecionado ? setorSelecionado.id : savedSetorId;
+      if (activeId) {
+        const found = data.find(s => s.id === activeId);
         if (found) {
           setSetorSelecionado(found);
-          carregarCadastro(found.id);
-          carregarAlertas(found.id);
-          carregarMonitoramento(found.id);
+          if (!setorSelecionado) {
+            carregarCadastro(found.id);
+            carregarAlertas(found.id);
+            carregarMonitoramento(found.id);
+          }
         }
       }
     } catch (e: any) {
@@ -664,6 +667,68 @@ export default function App() {
 
     return () => {
       clearInterval(intervalTime);
+    };
+  }, []);
+
+  // Controle de Inatividade e Sincronização Automática em segundo plano (a cada 30 segundos se ocioso)
+  const lastActivityRef = useRef(Date.now());
+  const setorSelecionadoRef = useRef(setorSelecionado);
+  const stepRef = useRef(step);
+
+  useEffect(() => {
+    setorSelecionadoRef.current = setorSelecionado;
+  }, [setorSelecionado]);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    const registrarAtividade = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    // Eventos globais de interação para monitorar se o usuário está mexendo no app
+    window.addEventListener("mousedown", registrarAtividade, { passive: true });
+    window.addEventListener("keydown", registrarAtividade, { passive: true });
+    window.addEventListener("click", registrarAtividade, { passive: true });
+    window.addEventListener("touchstart", registrarAtividade, { passive: true });
+    window.addEventListener("scroll", registrarAtividade, { passive: true });
+
+    // Intervalo de verificação a cada 15 segundos
+    const syncInterval = setInterval(async () => {
+      const tempoInativo = Date.now() - lastActivityRef.current;
+      // Se estiver ocioso há mais de 30 segundos
+      if (tempoInativo >= 30000) {
+        try {
+          // Atualiza lista de setores (para novos setores, títulos editados, novas senhas, etc.)
+          await carregarSetores();
+
+          // Se houver setor selecionado ativo, sincroniza suas informações correspondentes
+          const ativo = setorSelecionadoRef.current;
+          if (ativo) {
+            await carregarCadastro(ativo.id);
+            await carregarAlertas(ativo.id);
+            await carregarMonitoramento(ativo.id);
+            
+            // Se estiver visualizando a planilha ou estatísticas, sincroniza os registros completos
+            if (stepRef.current === "registros" || stepRef.current === "estatisticas") {
+              await carregarRegistros();
+            }
+          }
+        } catch (error) {
+          console.error("Erro na sincronização automática em segundo plano:", error);
+        }
+      }
+    }, 15000); // Roda a checagem a cada 15 segundos
+
+    return () => {
+      window.removeEventListener("mousedown", registrarAtividade);
+      window.removeEventListener("keydown", registrarAtividade);
+      window.removeEventListener("click", registrarAtividade);
+      window.removeEventListener("touchstart", registrarAtividade);
+      window.removeEventListener("scroll", registrarAtividade);
+      clearInterval(syncInterval);
     };
   }, []);
 
