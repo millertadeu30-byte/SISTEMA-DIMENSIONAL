@@ -66,6 +66,78 @@ function parseHoraParaMinutos(horaStr: string): number {
 }
 
 export function isOfflineMode(): boolean {
+  if (localStorage.getItem("modoOfflineLocal") === null) {
+    localStorage.setItem("modoOfflineLocal", "true");
+    
+    // Semente de setores se estiver vazio
+    if (!localStorage.getItem("local_setores")) {
+      const defaultSetores = [
+        {
+          id: "dimensional-t-automatico",
+          titulo: "DIMENSIONAL T.AUTOMÁTICO",
+          senha: "",
+          maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
+          colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
+        },
+        {
+          id: "dimensional-t-cnc",
+          titulo: "DIMENSIONAL T.CNC",
+          senha: "",
+          maquinas: ["04", "06", "07", "08", "09"],
+          colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
+        }
+      ];
+      localStorage.setItem("local_setores", JSON.stringify(defaultSetores));
+    }
+
+    // Semente de registros se estiver vazio
+    if (!localStorage.getItem("local_registros")) {
+      const { data: hoje } = getFormatoBrasil();
+      const defaultRegistros = [
+        {
+          linha: "reg-1",
+          setorId: "dimensional-t-automatico",
+          data: hoje,
+          hora: "07:30:00",
+          colaborador: "ANSELMO",
+          maquina: "7",
+          conforme: "SIM",
+          naoConformidade: "OK",
+          codigoPeca: "-",
+          responsavel: "-",
+          usoDMM: "SIM",
+          motivoDMM: "-",
+          solucao: "",
+          trocaFerramenta: "NÃO",
+          oQueTrocou: "-",
+          quemTrocou: "-",
+          modeloPeca: "-",
+          timestamp: Date.now() - 3600000
+        },
+        {
+          linha: "reg-2",
+          setorId: "dimensional-t-cnc",
+          data: hoje,
+          hora: "08:15:00",
+          colaborador: "GABRIEL",
+          maquina: "07",
+          conforme: "NÃO",
+          naoConformidade: "DIAMETRO EXTERNO FORA DO LIMITE (+0.05)",
+          codigoPeca: "PECA-13B",
+          responsavel: "GABRIEL",
+          usoDMM: "SIM",
+          motivoDMM: "-",
+          solucao: "",
+          trocaFerramenta: "NÃO",
+          oQueTrocou: "-",
+          quemTrocou: "-",
+          modeloPeca: "EIXO-M13",
+          timestamp: Date.now()
+        }
+      ];
+      localStorage.setItem("local_registros", JSON.stringify(defaultRegistros));
+    }
+  }
   return localStorage.getItem("modoOfflineLocal") === "true";
 }
 
@@ -76,11 +148,18 @@ export function fbAtivarModoOffline(): void {
   if (!localStorage.getItem("local_setores")) {
     const defaultSetores = [
       {
-        id: "t-automatico",
-        titulo: "SISTEMA DIMENSIONAL T.AUTOMÁTICO",
+        id: "dimensional-t-automatico",
+        titulo: "DIMENSIONAL T.AUTOMÁTICO",
         senha: "",
         maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
         colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
+      },
+      {
+        id: "dimensional-t-cnc",
+        titulo: "DIMENSIONAL T.CNC",
+        senha: "",
+        maquinas: ["04", "06", "07", "08", "09"],
+        colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
       }
     ];
     localStorage.setItem("local_setores", JSON.stringify(defaultSetores));
@@ -92,7 +171,7 @@ export function fbAtivarModoOffline(): void {
     const defaultRegistros = [
       {
         linha: "reg-1",
-        setorId: "t-automatico",
+        setorId: "dimensional-t-automatico",
         data: hoje,
         hora: "07:30:00",
         colaborador: "ANSELMO",
@@ -112,15 +191,15 @@ export function fbAtivarModoOffline(): void {
       },
       {
         linha: "reg-2",
-        setorId: "t-automatico",
+        setorId: "dimensional-t-cnc",
         data: hoje,
         hora: "08:15:00",
-        colaborador: "ALEXANDER",
-        maquina: "13",
+        colaborador: "GABRIEL",
+        maquina: "07",
         conforme: "NÃO",
         naoConformidade: "DIAMETRO EXTERNO FORA DO LIMITE (+0.05)",
         codigoPeca: "PECA-13B",
-        responsavel: "ANSELMO",
+        responsavel: "GABRIEL",
         usoDMM: "SIM",
         motivoDMM: "-",
         solucao: "",
@@ -168,29 +247,41 @@ export async function inicializarBancoFirebase() {
     const setoresSnapshot = await getDocs(collection(db, "setores"));
     if (setoresSnapshot.empty) {
       console.log("Seeding Firestore with default sectors...");
-      const colabsPadrao = ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"];
-      const maqsPadrao = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
+      const colabsTAuto = ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"];
+      const maqsTAuto = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
 
-      // Add default sector
-      await setDoc(doc(db, "setores", "t-automatico"), {
-        id: "t-automatico",
-        titulo: "SISTEMA DIMENSIONAL T.AUTOMÁTICO",
+      const colabsTCnc = ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"];
+      const maqsTCnc = ["04", "06", "07", "08", "09"];
+
+      // Add default sector 1
+      await setDoc(doc(db, "setores", "dimensional-t-automatico"), {
+        id: "dimensional-t-automatico",
+        titulo: "DIMENSIONAL T.AUTOMÁTICO",
         senha: "",
-        maquinas: maqsPadrao,
-        colaboradores: colabsPadrao
+        maquinas: maqsTAuto,
+        colaboradores: colabsTAuto
+      });
+
+      // Add default sector 2
+      await setDoc(doc(db, "setores", "dimensional-t-cnc"), {
+        id: "dimensional-t-cnc",
+        titulo: "DIMENSIONAL T.CNC",
+        senha: "",
+        maquinas: maqsTCnc,
+        colaboradores: colabsTCnc
       });
 
       // Add default global config
       await setDoc(doc(db, "config", "cadastro"), {
-        colaboradores: colabsPadrao,
-        maquinas: maqsPadrao
+        colaboradores: [...colabsTAuto, ...colabsTCnc],
+        maquinas: [...maqsTAuto, ...maqsTCnc]
       });
 
       // Add default registrations
       const { data: hoje } = getFormatoBrasil();
       const registrosIniciais: Partial<Registro>[] = [
         {
-          setorId: "t-automatico",
+          setorId: "dimensional-t-automatico",
           data: hoje,
           hora: "07:30:00",
           colaborador: "ANSELMO",
@@ -209,15 +300,15 @@ export async function inicializarBancoFirebase() {
           timestamp: Date.now() - 3600000
         },
         {
-          setorId: "t-automatico",
+          setorId: "dimensional-t-cnc",
           data: hoje,
           hora: "08:15:00",
-          colaborador: "ALEXANDER",
-          maquina: "13",
+          colaborador: "GABRIEL",
+          maquina: "07",
           conforme: "NÃO",
           naoConformidade: "DIAMETRO EXTERNO FORA DO LIMITE (+0.05)",
           codigoPeca: "PECA-13B",
-          responsavel: "ANSELMO",
+          responsavel: "GABRIEL",
           usoDMM: "SIM",
           motivoDMM: "-",
           solucao: "", // Pendente de solução
