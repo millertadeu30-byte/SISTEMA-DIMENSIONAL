@@ -2,7 +2,6 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import cors from "cors";
-import { createServer as createViteServer } from "vite";
 import { Registro, NCPendente, HistoricoItem, ParadaItem, DesvioItem, Setor } from "./src/types.js";
 
 const app = express();
@@ -801,7 +800,10 @@ app.post("/api/save-google-token", (req, res) => {
 // VITE MIDDLEWARE SETUP
 // ==========================================
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  const isProduction = process.env.NODE_ENV === "production" || (process.argv[1] && process.argv[1].endsWith("server.cjs"));
+
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa"
