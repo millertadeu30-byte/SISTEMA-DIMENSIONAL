@@ -1,21 +1,12 @@
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore,
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  orderBy,
-  where,
-  limit,
-  writeBatch,
-  onSnapshot
-} from "firebase/firestore";
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  User,
+  signOut
+} from "firebase/auth";
 import { Setor, Registro, NCPendente, HistoricoItem, ParadaItem, DesvioItem } from "./types";
 
 // Firebase App configuration (publicly safe client-side config)
@@ -31,7 +22,15 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+
+// Setup Google OAuth provider with Sheets and Drive.file scopes
+const provider = new GoogleAuthProvider();
+provider.addScope("https://www.googleapis.com/auth/spreadsheets");
+provider.addScope("https://www.googleapis.com/auth/drive.file");
+
+let isSigningIn = false;
+let cachedAccessToken: string | null = null;
 
 // Helpers to format Brazil timezone times
 export function getFormatoBrasil() {
@@ -65,11 +64,125 @@ function parseHoraParaMinutos(horaStr: string): number {
   return h * 60 + m;
 }
 
+// Global spreadsheet ID provided by user
+const SPREADSHEET_ID = "1Yxa2jtn73HGAeYR6hQF9OAUWtMa-r20KnTjyGEjzy_g";
+let sheetIdsCache: Record<string, number> = {};
+
+// Cache Google Sheet tab ID mapping
+export async function obterSheetId(sheetName: string): Promise<number> {
+  if (sheetIdsCache[sheetName] !== undefined) {
+    return sheetIdsCache[sheetName];
+  }
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) {
+    throw new Error("Erro ao obter metadados da planilha");
+  }
+  const data = await res.json();
+  const sheets = data.sheets || [];
+  for (const s of sheets) {
+    const title = s.properties?.title;
+    const id = s.properties?.sheetId;
+    if (title && id !== undefined) {
+      sheetIdsCache[title] = id;
+    }
+  }
+  if (sheetIdsCache[sheetName] === undefined) {
+    throw new Error(`Aba ${sheetName} não encontrada na planilha`);
+  }
+  return sheetIdsCache[sheetName];
+}
+
+// Active/offline mode toggled based on Google sign in state
 export function isOfflineMode(): boolean {
-  if (localStorage.getItem("modoOfflineLocal") === null) {
-    localStorage.setItem("modoOfflineLocal", "false");
-    
-    // Semente de setores se estiver vazio
+  return !cachedAccessToken;
+}
+
+export function fbAtivarModoOffline(): void {
+  // Offline fallback is automatic when not logged in
+}
+
+export function fbDesativarModoOffline(): void {
+  // Handled via Sign In
+}
+
+// Export backup from local localStorage if offline
+export function fbExportarBackup(): string {
+  const setores = localStorage.getItem("local_setores") ? JSON.parse(localStorage.getItem("local_setores")!) : [];
+  const registros = localStorage.getItem("local_registros") ? JSON.parse(localStorage.getItem("local_registros")!) : [];
+  return JSON.stringify({ setores, registros }, null, 2);
+}
+
+// Import backup to local localStorage if offline
+export function fbImportarBackup(jsonStr: string): void {
+  try {
+    const backup = JSON.parse(jsonStr);
+    if (backup.setores && Array.isArray(backup.setores)) {
+      localStorage.setItem("local_setores", JSON.stringify(backup.setores));
+    }
+    if (backup.registros && Array.isArray(backup.registros)) {
+      localStorage.setItem("local_registros", JSON.stringify(backup.registros));
+    }
+  } catch (e) {
+    throw new Error("Formato de backup inválido.");
+  }
+}
+
+// Google Authentication API
+export const initAuth = (
+  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthFailure?: () => void
+) => {
+  return onAuthStateChanged(auth, async (user: User | null) => {
+    if (user) {
+      if (cachedAccessToken) {
+        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      } else {
+        if (onAuthFailure) onAuthFailure();
+      }
+    } else {
+      cachedAccessToken = null;
+      if (onAuthFailure) onAuthFailure();
+    }
+  });
+};
+
+export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      throw new Error("Não foi possível obter o token de acesso do Google.");
+    }
+    cachedAccessToken = credential.accessToken;
+    return { user: result.user, accessToken: cachedAccessToken };
+  } catch (error: any) {
+    console.error("Erro no login do Google:", error);
+    throw error;
+  } finally {
+    isSigningIn = false;
+  }
+};
+
+export const logout = async () => {
+  await signOut(auth);
+  cachedAccessToken = null;
+};
+
+export const getAccessToken = async (): Promise<string | null> => {
+  return cachedAccessToken;
+};
+
+// Seeding and initializing Google Sheets structures
+export async function inicializarBancoFirebase() {
+  const token = await getAccessToken();
+  if (!token) {
+    // Se não autenticado, inicializa os dados locais de simulação
     if (!localStorage.getItem("local_setores")) {
       const defaultSetores = [
         {
@@ -89,8 +202,6 @@ export function isOfflineMode(): boolean {
       ];
       localStorage.setItem("local_setores", JSON.stringify(defaultSetores));
     }
-
-    // Semente de registros se estiver vazio
     if (!localStorage.getItem("local_registros")) {
       const { data: hoje } = getFormatoBrasil();
       const defaultRegistros = [
@@ -137,150 +248,119 @@ export function isOfflineMode(): boolean {
       ];
       localStorage.setItem("local_registros", JSON.stringify(defaultRegistros));
     }
+    return;
   }
-  return localStorage.getItem("modoOfflineLocal") === "true";
-}
 
-export function fbAtivarModoOffline(): void {
-  localStorage.setItem("modoOfflineLocal", "true");
-  
-  // Semente de setores se estiver vazio
-  if (!localStorage.getItem("local_setores")) {
-    const defaultSetores = [
-      {
-        id: "dimensional-t-automatico",
-        titulo: "DIMENSIONAL T.AUTOMÁTICO",
-        senha: "1234",
-        maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
-        colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
-      },
-      {
-        id: "dimensional-t-cnc",
-        titulo: "DIMENSIONAL T.CNC",
-        senha: "1234",
-        maquinas: ["04", "06", "07", "08", "09"],
-        colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
-      }
-    ];
-    localStorage.setItem("local_setores", JSON.stringify(defaultSetores));
-  }
-  
-  // Semente de registros se estiver vazio
-  if (!localStorage.getItem("local_registros")) {
-    const { data: hoje } = getFormatoBrasil();
-    const defaultRegistros = [
-      {
-        linha: "reg-1",
-        setorId: "dimensional-t-automatico",
-        data: hoje,
-        hora: "07:30:00",
-        colaborador: "ANSELMO",
-        maquina: "7",
-        conforme: "SIM",
-        naoConformidade: "OK",
-        codigoPeca: "-",
-        responsavel: "-",
-        usoDMM: "SIM",
-        motivoDMM: "-",
-        solucao: "",
-        trocaFerramenta: "NÃO",
-        oQueTrocou: "-",
-        quemTrocou: "-",
-        modeloPeca: "-",
-        timestamp: Date.now() - 3600000
-      },
-      {
-        linha: "reg-2",
-        setorId: "dimensional-t-cnc",
-        data: hoje,
-        hora: "08:15:00",
-        colaborador: "GABRIEL",
-        maquina: "07",
-        conforme: "NÃO",
-        naoConformidade: "DIAMETRO EXTERNO FORA DO LIMITE (+0.05)",
-        codigoPeca: "PECA-13B",
-        responsavel: "GABRIEL",
-        usoDMM: "SIM",
-        motivoDMM: "-",
-        solucao: "",
-        trocaFerramenta: "NÃO",
-        oQueTrocou: "-",
-        quemTrocou: "-",
-        modeloPeca: "EIXO-M13",
-        timestamp: Date.now()
-      }
-    ];
-    localStorage.setItem("local_registros", JSON.stringify(defaultRegistros));
-  }
-}
-
-export function fbDesativarModoOffline(): void {
-  localStorage.removeItem("modoOfflineLocal");
-}
-
-export function fbExportarBackup(): string {
-  const backup = {
-    setores: JSON.parse(localStorage.getItem("local_setores") || "[]"),
-    registros: JSON.parse(localStorage.getItem("local_registros") || "[]"),
-    dataExportacao: new Date().toISOString()
-  };
-  return JSON.stringify(backup, null, 2);
-}
-
-export function fbImportarBackup(jsonStr: string): void {
   try {
-    const backup = JSON.parse(jsonStr);
-    if (backup.setores && Array.isArray(backup.setores)) {
-      localStorage.setItem("local_setores", JSON.stringify(backup.setores));
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    
+    if (!res.ok) {
+      throw new Error(`Erro ao obter metadados da planilha: ${res.statusText}`);
     }
-    if (backup.registros && Array.isArray(backup.registros)) {
-      localStorage.setItem("local_registros", JSON.stringify(backup.registros));
+
+    const data = await res.json();
+    const sheets = data.sheets || [];
+    const titulos = sheets.map((s: any) => s.properties?.title);
+    
+    sheets.forEach((s: any) => {
+      if (s.properties?.title && s.properties?.sheetId !== undefined) {
+        sheetIdsCache[s.properties.title] = s.properties.sheetId;
+      }
+    });
+
+    const requests: any[] = [];
+    
+    if (!titulos.includes("setores")) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: "setores"
+          }
+        }
+      });
     }
-  } catch (e) {
-    throw new Error("Formato de backup inválido.");
-  }
-}
 
-// 1. Initializer function to seed Firestore database on startup if it is empty
-export async function inicializarBancoFirebase() {
-  try {
-    const setoresSnapshot = await getDocs(collection(db, "setores"));
-    if (setoresSnapshot.empty) {
-      console.log("Seeding Firestore with default sectors...");
-      const colabsTAuto = ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"];
-      const maqsTAuto = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
-
-      const colabsTCnc = ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"];
-      const maqsTCnc = ["04", "06", "07", "08", "09"];
-
-      // Add default sector 1
-      await setDoc(doc(db, "setores", "dimensional-t-automatico"), {
-        id: "dimensional-t-automatico",
-        titulo: "DIMENSIONAL T.AUTOMÁTICO",
-        senha: "1234",
-        maquinas: maqsTAuto,
-        colaboradores: colabsTAuto
+    if (!titulos.includes("registros")) {
+      requests.push({
+        addSheet: {
+          properties: {
+            title: "registros"
+          }
+        }
       });
+    }
 
-      // Add default sector 2
-      await setDoc(doc(db, "setores", "dimensional-t-cnc"), {
-        id: "dimensional-t-cnc",
-        titulo: "DIMENSIONAL T.CNC",
-        senha: "1234",
-        maquinas: maqsTCnc,
-        colaboradores: colabsTCnc
+    if (requests.length > 0) {
+      const createRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ requests })
       });
-
-      // Add default global config
-      await setDoc(doc(db, "config", "cadastro"), {
-        colaboradores: [...colabsTAuto, ...colabsTCnc],
-        maquinas: [...maqsTAuto, ...maqsTCnc]
+      if (!createRes.ok) {
+        throw new Error("Erro ao criar as abas necessárias na planilha");
+      }
+      
+      const updatedMetaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
+      if (updatedMetaRes.ok) {
+        const updatedData = await updatedMetaRes.json();
+        (updatedData.sheets || []).forEach((s: any) => {
+          if (s.properties?.title && s.properties?.sheetId !== undefined) {
+            sheetIdsCache[s.properties.title] = s.properties.sheetId;
+          }
+        });
+      }
+    }
 
-      // Add default registrations
-      const { data: hoje } = getFormatoBrasil();
-      const registrosIniciais: Partial<Registro>[] = [
+    // Verify header rows and seed if empty
+    const setoresRows = await lerAba("setores");
+    if (setoresRows.length === 0) {
+      const header = ["id", "titulo", "senha", "maquinas", "colaboradores"];
+      const defaultSetores = [
         {
+          id: "dimensional-t-automatico",
+          titulo: "DIMENSIONAL T.AUTOMÁTICO",
+          senha: "1234",
+          maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
+          colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
+        },
+        {
+          id: "dimensional-t-cnc",
+          titulo: "DIMENSIONAL T.CNC",
+          senha: "1234",
+          maquinas: ["04", "06", "07", "08", "09"],
+          colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
+        }
+      ];
+      
+      const bodyValues = [header, ...defaultSetores.map(setorToRow)];
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/setores!A1:E${bodyValues.length}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ values: bodyValues })
+      });
+    }
+
+    const registrosRows = await lerAba("registros");
+    if (registrosRows.length === 0) {
+      const header = [
+        "linha", "setorId", "data", "hora", "colaborador", "maquina", "conforme", "naoConformidade",
+        "codigoPeca", "responsavel", "usoDMM", "motivoDMM", "solucao", "trocaFerramenta", "oQueTrocou",
+        "quemTrocou", "modeloPeca", "codAlternativo", "comentarioSupervisor", "quemResolveu", "timestamp"
+      ];
+      const { data: hoje } = getFormatoBrasil();
+      const defaultRegistros: Registro[] = [
+        {
+          linha: "reg-1",
           setorId: "dimensional-t-automatico",
           data: hoje,
           hora: "07:30:00",
@@ -300,6 +380,7 @@ export async function inicializarBancoFirebase() {
           timestamp: Date.now() - 3600000
         },
         {
+          linha: "reg-2",
           setorId: "dimensional-t-cnc",
           data: hoje,
           hora: "08:15:00",
@@ -311,7 +392,7 @@ export async function inicializarBancoFirebase() {
           responsavel: "GABRIEL",
           usoDMM: "SIM",
           motivoDMM: "-",
-          solucao: "", // Pendente de solução
+          solucao: "",
           trocaFerramenta: "NÃO",
           oQueTrocou: "-",
           quemTrocou: "-",
@@ -320,66 +401,215 @@ export async function inicializarBancoFirebase() {
         }
       ];
 
-      for (const reg of registrosIniciais) {
-        await addDoc(collection(db, "registros"), reg);
-      }
-      console.log("Firestore successfully seeded with default data!");
-    } else {
-      // Auto-migrate: check if default sectors exist and have blank passwords, and if so, set them to "1234"
-      const tAutoRef = doc(db, "setores", "dimensional-t-automatico");
-      const tAutoDoc = await getDoc(tAutoRef);
-      if (tAutoDoc.exists()) {
-        const data = tAutoDoc.data();
-        if (!data.senha || data.senha === "") {
-          console.log("Updating password for dimensional-t-automatico to 1234...");
-          await updateDoc(tAutoRef, { senha: "1234" });
-        }
-      }
-
-      const tCncRef = doc(db, "setores", "dimensional-t-cnc");
-      const tCncDoc = await getDoc(tCncRef);
-      if (tCncDoc.exists()) {
-        const data = tCncDoc.data();
-        if (!data.senha || data.senha === "") {
-          console.log("Updating password for dimensional-t-cnc to 1234...");
-          await updateDoc(tCncRef, { senha: "1234" });
-        }
-      }
+      const bodyValues = [header, ...defaultRegistros.map(registroToRow)];
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/registros!A1:U${bodyValues.length}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ values: bodyValues })
+      });
     }
   } catch (err) {
-    console.error("Error seeding Firestore:", err);
+    console.error("Erro na inicialização da planilha:", err);
   }
 }
 
-// 2. Sector Management APIs
+// Google Sheets Low-level Reader/Writer helpers
+export async function lerAba(sheetName: string): Promise<any[][]> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+  
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A:Z`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    console.error("Erro ao ler aba:", errData);
+    throw new Error(`Erro ao ler aba ${sheetName}: ${errData?.error?.message || res.statusText}`);
+  }
+  const data = await res.json();
+  return data.values || [];
+}
+
+export async function adicionarLinhaAba(sheetName: string, valores: any[]): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A:Z:append?valueInputOption=USER_ENTERED`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      values: [valores]
+    })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(`Erro ao adicionar linha em ${sheetName}: ${errData?.error?.message || res.statusText}`);
+  }
+}
+
+export async function atualizarLinhaAba(sheetName: string, rowIndex: number, valores: any[]): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A${rowIndex}:Z${rowIndex}?valueInputOption=USER_ENTERED`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      values: [valores]
+    })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(`Erro ao atualizar linha em ${sheetName}: ${errData?.error?.message || res.statusText}`);
+  }
+}
+
+export async function excluirLinhaAba(sheetName: string, rowIndex: number): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+
+  const sheetId = await obterSheetId(sheetName);
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: sheetId,
+              dimension: "ROWS",
+              startIndex: rowIndex - 1,
+              endIndex: rowIndex
+            }
+          }
+        }
+      ]
+    })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(`Erro ao excluir linha: ${errData?.error?.message || res.statusText}`);
+  }
+}
+
+export async function limparDadosAba(sheetName: string): Promise<void> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Não autenticado com o Google");
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${sheetName}!A2:Z10000:clear`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) {
+    throw new Error(`Erro ao limpar dados da aba ${sheetName}`);
+  }
+}
+
+// Data parser mappings
+function parsedSetorRow(row: any[]): Setor {
+  return {
+    id: String(row[0] || ""),
+    titulo: String(row[1] || ""),
+    senha: String(row[2] || ""),
+    maquinas: row[3] ? String(row[3]).split(",").map(s => s.trim()).filter(Boolean) : [],
+    colaboradores: row[4] ? String(row[4]).split(",").map(s => s.trim()).filter(Boolean) : []
+  };
+}
+
+function setorToRow(s: Setor): any[] {
+  return [
+    s.id,
+    s.titulo,
+    s.senha,
+    s.maquinas.join(", "),
+    s.colaboradores.join(", ")
+  ];
+}
+
+function parsedRegistroRow(row: any[]): Registro {
+  return {
+    linha: String(row[0] || ""),
+    setorId: String(row[1] || ""),
+    data: String(row[2] || ""),
+    hora: String(row[3] || ""),
+    colaborador: String(row[4] || ""),
+    maquina: String(row[5] || ""),
+    conforme: (row[6] === "SIM" || row[6] === "NÃO") ? row[6] as 'SIM' | 'NÃO' : "SIM",
+    naoConformidade: String(row[7] || ""),
+    codigoPeca: String(row[8] || ""),
+    responsavel: String(row[9] || ""),
+    usoDMM: (row[10] === "SIM" || row[10] === "NÃO") ? row[10] as 'SIM' | 'NÃO' : "SIM",
+    motivoDMM: String(row[11] || ""),
+    solucao: String(row[12] || ""),
+    trocaFerramenta: (row[13] === "SIM" || row[13] === "NÃO") ? row[13] as 'SIM' | 'NÃO' : "NÃO",
+    oQueTrocou: String(row[14] || ""),
+    quemTrocou: String(row[15] || ""),
+    modeloPeca: String(row[16] || ""),
+    codAlternativo: String(row[17] || ""),
+    comentarioSupervisor: String(row[18] || ""),
+    quemResolveu: String(row[19] || ""),
+    timestamp: row[20] ? Number(row[20]) : Date.now()
+  };
+}
+
+function registroToRow(r: Registro): any[] {
+  return [
+    r.linha || "",
+    r.setorId || "",
+    r.data || "",
+    r.hora || "",
+    r.colaborador || "",
+    r.maquina || "",
+    r.conforme || "SIM",
+    r.naoConformidade || "",
+    r.codigoPeca || "",
+    r.responsavel || "",
+    r.usoDMM || "SIM",
+    r.motivoDMM || "",
+    r.solucao || "",
+    r.trocaFerramenta || "NÃO",
+    r.oQueTrocou || "",
+    r.quemTrocou || "",
+    r.modeloPeca || "",
+    r.codAlternativo || "",
+    r.comentarioSupervisor || "",
+    r.quemResolveu || "",
+    r.timestamp || Date.now()
+  ];
+}
+
+// Sector Management APIs
 export async function fbObterSetores(): Promise<Setor[]> {
   if (isOfflineMode()) {
     const data = localStorage.getItem("local_setores");
     return data ? JSON.parse(data) : [];
   }
-  const snapshot = await getDocs(collection(db, "setores"));
-  const setores: Setor[] = [];
-  snapshot.forEach(doc => {
-    setores.push(doc.data() as Setor);
-  });
-  return setores;
+  try {
+    const rows = await lerAba("setores");
+    if (rows.length <= 1) return [];
+    return rows.slice(1).map(parsedSetorRow);
+  } catch (e) {
+    console.error("Erro ao obter setores:", e);
+    const data = localStorage.getItem("local_setores");
+    return data ? JSON.parse(data) : [];
+  }
 }
 
 export async function fbCriarSetor(titulo: string, senha?: string): Promise<Setor> {
-  if (isOfflineMode()) {
-    const id = "setor-" + Date.now();
-    const novoSetor: Setor = {
-      id,
-      titulo: titulo.trim().toUpperCase(),
-      senha: senha ? senha.trim() : "",
-      maquinas: ["3", "4", "5", "6", "7"],
-      colaboradores: ["OPERADOR 1", "OPERADOR 2"]
-    };
-    const setores = JSON.parse(localStorage.getItem("local_setores") || "[]");
-    setores.push(novoSetor);
-    localStorage.setItem("local_setores", JSON.stringify(setores));
-    return novoSetor;
-  }
   const id = "setor-" + Date.now();
   const novoSetor: Setor = {
     id,
@@ -388,7 +618,13 @@ export async function fbCriarSetor(titulo: string, senha?: string): Promise<Seto
     maquinas: ["3", "4", "5", "6", "7"],
     colaboradores: ["OPERADOR 1", "OPERADOR 2"]
   };
-  await setDoc(doc(db, "setores", id), novoSetor);
+  if (isOfflineMode()) {
+    const setores = JSON.parse(localStorage.getItem("local_setores") || "[]");
+    setores.push(novoSetor);
+    localStorage.setItem("local_setores", JSON.stringify(setores));
+    return novoSetor;
+  }
+  await adicionarLinhaAba("setores", setorToRow(novoSetor));
   return novoSetor;
 }
 
@@ -397,320 +633,116 @@ export async function fbAtualizarSetor(id: string, updates: Partial<Setor>): Pro
     const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
     const idx = setores.findIndex(s => s.id === id);
     if (idx !== -1) {
-      const cleanUpdates: any = {};
-      if (updates.titulo !== undefined) cleanUpdates.titulo = updates.titulo.trim().toUpperCase();
-      if (updates.senha !== undefined) cleanUpdates.senha = updates.senha.trim();
-      if (updates.maquinas !== undefined) {
-        cleanUpdates.maquinas = updates.maquinas.map(m => m.trim().toUpperCase()).filter(Boolean);
-      }
-      if (updates.colaboradores !== undefined) {
-        cleanUpdates.colaboradores = updates.colaboradores.map(c => c.trim().toUpperCase()).filter(Boolean);
-      }
-      setores[idx] = { ...setores[idx], ...cleanUpdates };
+      setores[idx] = { ...setores[idx], ...updates };
       localStorage.setItem("local_setores", JSON.stringify(setores));
     }
     return;
   }
-  const cleanUpdates: any = {};
-  if (updates.titulo !== undefined) cleanUpdates.titulo = updates.titulo.trim().toUpperCase();
-  if (updates.senha !== undefined) cleanUpdates.senha = updates.senha.trim();
-  if (updates.maquinas !== undefined) {
-    cleanUpdates.maquinas = updates.maquinas.map(m => m.trim().toUpperCase()).filter(Boolean);
+  const rows = await lerAba("setores");
+  const rowIndex = rows.findIndex(row => row[0] === id);
+  if (rowIndex === -1) {
+    throw new Error("Setor não encontrado");
   }
-  if (updates.colaboradores !== undefined) {
-    cleanUpdates.colaboradores = updates.colaboradores.map(c => c.trim().toUpperCase()).filter(Boolean);
-  }
-  await updateDoc(doc(db, "setores", id), cleanUpdates);
+  const currentSetor = parsedSetorRow(rows[rowIndex]);
+  const updatedSetor: Setor = { ...currentSetor, ...updates };
+  await atualizarLinhaAba("setores", rowIndex + 1, setorToRow(updatedSetor));
 }
 
 export async function fbExcluirSetor(id: string): Promise<void> {
   if (isOfflineMode()) {
-    if (id === "t-automatico") {
-      throw new Error("O setor padrão não pode ser excluído");
-    }
     const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
     const filtrados = setores.filter(s => s.id !== id);
     localStorage.setItem("local_setores", JSON.stringify(filtrados));
     return;
   }
-  if (id === "t-automatico") {
-    throw new Error("O setor padrão não pode ser excluído");
+  const rows = await lerAba("setores");
+  const rowIndex = rows.findIndex(row => row[0] === id);
+  if (rowIndex === -1) {
+    throw new Error("Setor não encontrado");
   }
-  await deleteDoc(doc(db, "setores", id));
+  await excluirLinhaAba("setores", rowIndex + 1);
 }
 
-// 3. Registration/Cadastro APIs
 export async function fbObterCadastro(setorId?: string): Promise<{ colaboradores: string[]; maquinas: string[] }> {
-  if (isOfflineMode()) {
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const sFound = setores.find(s => s.id === setorId);
-      if (sFound) {
-        return { colaboradores: sFound.colaboradores || [], maquinas: sFound.maquinas || [] };
-      }
-    }
-    return { colaboradores: [], maquinas: [] };
-  }
-  if (setorId) {
-    const sDoc = await getDoc(doc(db, "setores", setorId));
-    if (sDoc.exists()) {
-      const sData = sDoc.data() as Setor;
-      return { colaboradores: sData.colaboradores || [], maquinas: sData.maquinas || [] };
-    }
-  }
-  const globalDoc = await getDoc(doc(db, "config", "cadastro"));
-  if (globalDoc.exists()) {
-    const data = globalDoc.data() as { colaboradores: string[]; maquinas: string[] };
-    return { colaboradores: data.colaboradores || [], maquinas: data.maquinas || [] };
-  }
-  return { colaboradores: [], maquinas: [] };
+  if (!setorId) return { colaboradores: [], maquinas: [] };
+  const setores = await fbObterSetores();
+  const setor = setores.find(s => s.id === setorId);
+  if (!setor) return { colaboradores: [], maquinas: [] };
+  return {
+    colaboradores: setor.colaboradores || [],
+    maquinas: setor.maquinas || []
+  };
 }
 
 export async function fbAdicionarColaborador(nome: string, setorId?: string): Promise<string[]> {
-  const nomeLimpo = nome.trim().toUpperCase();
-  if (isOfflineMode()) {
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const idx = setores.findIndex(s => s.id === setorId);
-      if (idx !== -1) {
-        const colabs = setores[idx].colaboradores || [];
-        if (!colabs.includes(nomeLimpo)) {
-          colabs.push(nomeLimpo);
-          colabs.sort();
-          setores[idx].colaboradores = colabs;
-          localStorage.setItem("local_setores", JSON.stringify(setores));
-        }
-        return colabs;
-      }
-    }
-    return [];
+  if (!setorId) throw new Error("ID de setor é obrigatório");
+  const setores = await fbObterSetores();
+  const setor = setores.find(s => s.id === setorId);
+  if (!setor) throw new Error("Setor não encontrado");
+  
+  const novosColaboradores = [...(setor.colaboradores || [])];
+  const colabFormatado = nome.trim().toUpperCase();
+  if (!novosColaboradores.includes(colabFormatado)) {
+    novosColaboradores.push(colabFormatado);
+    await fbAtualizarSetor(setorId, { colaboradores: novosColaboradores });
   }
-  if (setorId) {
-    const sRef = doc(db, "setores", setorId);
-    const sDoc = await getDoc(sRef);
-    if (sDoc.exists()) {
-      const sData = sDoc.data() as Setor;
-      const colabs = sData.colaboradores || [];
-      if (!colabs.includes(nomeLimpo)) {
-        colabs.push(nomeLimpo);
-        colabs.sort();
-        await updateDoc(sRef, { colaboradores: colabs });
-      }
-      return colabs;
-    }
-  }
-  const gRef = doc(db, "config", "cadastro");
-  const gDoc = await getDoc(gRef);
-  let colabs: string[] = [];
-  if (gDoc.exists()) {
-    colabs = (gDoc.data() as any).colaboradores || [];
-  }
-  if (!colabs.includes(nomeLimpo)) {
-    colabs.push(nomeLimpo);
-    colabs.sort();
-    await setDoc(gRef, { colaboradores: colabs }, { merge: true });
-  }
-  return colabs;
+  return novosColaboradores;
 }
 
 export async function fbRemoverColaborador(nome: string, setorId?: string): Promise<string[]> {
-  const nomeLimpo = nome.trim().toUpperCase();
-  if (isOfflineMode()) {
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const idx = setores.findIndex(s => s.id === setorId);
-      if (idx !== -1) {
-        const colabs = (setores[idx].colaboradores || []).filter(c => c !== nomeLimpo);
-        setores[idx].colaboradores = colabs;
-        localStorage.setItem("local_setores", JSON.stringify(setores));
-        return colabs;
-      }
-    }
-    return [];
-  }
-  if (setorId) {
-    const sRef = doc(db, "setores", setorId);
-    const sDoc = await getDoc(sRef);
-    if (sDoc.exists()) {
-      const sData = sDoc.data() as Setor;
-      const colabs = (sData.colaboradores || []).filter(c => c !== nomeLimpo);
-      await updateDoc(sRef, { colaboradores: colabs });
-      return colabs;
-    }
-  }
-  const gRef = doc(db, "config", "cadastro");
-  const gDoc = await getDoc(gRef);
-  let colabs: string[] = [];
-  if (gDoc.exists()) {
-    colabs = (gDoc.data() as any).colaboradores || [];
-  }
-  colabs = colabs.filter(c => c !== nomeLimpo);
-  await setDoc(gRef, { colaboradores: colabs }, { merge: true });
-  return colabs;
+  if (!setorId) throw new Error("ID de setor é obrigatório");
+  const setores = await fbObterSetores();
+  const setor = setores.find(s => s.id === setorId);
+  if (!setor) throw new Error("Setor não encontrado");
+  
+  const novosColaboradores = (setor.colaboradores || []).filter(c => c !== nome);
+  await fbAtualizarSetor(setorId, { colaboradores: novosColaboradores });
+  return novosColaboradores;
 }
 
 export async function fbAdicionarMaquina(codigo: string, setorId?: string): Promise<string[]> {
-  const codLimpo = codigo.trim().toUpperCase();
-  if (isOfflineMode()) {
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const idx = setores.findIndex(s => s.id === setorId);
-      if (idx !== -1) {
-        const maqs = setores[idx].maquinas || [];
-        if (!maqs.includes(codLimpo)) {
-          maqs.push(codLimpo);
-          maqs.sort();
-          setores[idx].maquinas = maqs;
-          localStorage.setItem("local_setores", JSON.stringify(setores));
-        }
-        return maqs;
-      }
-    }
-    return [];
+  if (!setorId) throw new Error("ID de setor é obrigatório");
+  const setores = await fbObterSetores();
+  const setor = setores.find(s => s.id === setorId);
+  if (!setor) throw new Error("Setor não encontrado");
+  
+  const novasMaquinas = [...(setor.maquinas || [])];
+  const maqFormatada = codigo.trim().toUpperCase();
+  if (!novasMaquinas.includes(maqFormatada)) {
+    novasMaquinas.push(maqFormatada);
+    await fbAtualizarSetor(setorId, { maquinas: novasMaquinas });
   }
-  if (setorId) {
-    const sRef = doc(db, "setores", setorId);
-    const sDoc = await getDoc(sRef);
-    if (sDoc.exists()) {
-      const sData = sDoc.data() as Setor;
-      const maqs = sData.maquinas || [];
-      if (!maqs.includes(codLimpo)) {
-        maqs.push(codLimpo);
-        maqs.sort();
-        await updateDoc(sRef, { maquinas: maqs });
-      }
-      return maqs;
-    }
-  }
-  const gRef = doc(db, "config", "cadastro");
-  const gDoc = await getDoc(gRef);
-  let maqs: string[] = [];
-  if (gDoc.exists()) {
-    maqs = (gDoc.data() as any).maquinas || [];
-  }
-  if (!maqs.includes(codLimpo)) {
-    maqs.push(codLimpo);
-    maqs.sort();
-    await setDoc(gRef, { maquinas: maqs }, { merge: true });
-  }
-  return maqs;
+  return novasMaquinas;
 }
 
 export async function fbRemoverMaquina(codigo: string, setorId?: string): Promise<string[]> {
-  const codLimpo = codigo.trim().toUpperCase();
-  if (isOfflineMode()) {
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const idx = setores.findIndex(s => s.id === setorId);
-      if (idx !== -1) {
-        const maqs = (setores[idx].maquinas || []).filter(m => m !== codLimpo);
-        setores[idx].maquinas = maqs;
-        localStorage.setItem("local_setores", JSON.stringify(setores));
-        return maqs;
-      }
-    }
-    return [];
-  }
-  if (setorId) {
-    const sRef = doc(db, "setores", setorId);
-    const sDoc = await getDoc(sRef);
-    if (sDoc.exists()) {
-      const sData = sDoc.data() as Setor;
-      const maqs = (sData.maquinas || []).filter(m => m !== codLimpo);
-      await updateDoc(sRef, { maquinas: maqs });
-      return maqs;
-    }
-  }
-  const gRef = doc(db, "config", "cadastro");
-  const gDoc = await getDoc(gRef);
-  let maqs: string[] = [];
-  if (gDoc.exists()) {
-    maqs = (gDoc.data() as any).maquinas || [];
-  }
-  maqs = maqs.filter(m => m !== codLimpo);
-  await setDoc(gRef, { maquinas: maqs }, { merge: true });
-  return maqs;
+  if (!setorId) throw new Error("ID de setor é obrigatório");
+  const setores = await fbObterSetores();
+  const setor = setores.find(s => s.id === setorId);
+  if (!setor) throw new Error("Setor não encontrado");
+  
+  const novasMaquinas = (setor.maquinas || []).filter(m => m !== codigo);
+  await fbAtualizarSetor(setorId, { maquinas: novasMaquinas });
+  return novasMaquinas;
 }
 
-// 4. Alert/Monitoring and Measurement APIs
+// Measurement and alerting APIs
 export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: NCPendente[]; historico: HistoricoItem[] }> {
-  if (isOfflineMode()) {
-    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
-    
-    // 1. Get unresolved NCs
-    const ncPendentes: NCPendente[] = [];
-    registros.forEach(r => {
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const solucao = r.solucao ? r.solucao.trim() : "";
-      if (solucao !== "") return; // Já resolvido
-
-      const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
-      if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-") {
-        ncPendentes.push({
-          linha: r.linha,
-          colaborador: r.colaborador || "NÃO INFORMADO",
-          responsavel: r.responsavel || "NÃO INFORMADO",
-          problema: r.naoConformidade,
-          maquina: r.maquina,
-          hora: r.hora.substring(0, 5),
-          data: r.data,
-          codigoPeca: r.codigoPeca || "-"
-        });
-      }
-    });
-
-    // 2. Get history (sorted by timestamp desc)
-    const rawHistory: any[] = [];
-    registros.forEach(r => {
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
-      const solucao = r.solucao ? r.solucao.trim() : "";
-      const isProblem = textoNC !== "OK" && textoNC !== "-" && textoNC !== "";
-      
-      if (isProblem) {
-        const infoTroca = r.trocaFerramenta === "SIM" ? ` | TROCA: ${r.oQueTrocou} por ${r.quemTrocou}` : "";
-        const solucaoCompleta = solucao ? `${solucao}${infoTroca}` : `PENDENTE${infoTroca}`;
-        rawHistory.push({
-          data: r.data,
-          hora: r.hora.substring(0, 5),
-          maquina: r.maquina,
-          problema: textoNC,
-          responsavel: r.responsavel || "NÃO INFORMADO",
-          colaborador: r.colaborador || "NÃO INFORMADO",
-          solucao: solucaoCompleta,
-          codigoPeca: r.codigoPeca || "-",
-          quemResolveu: r.quemResolveu || "",
-          timestamp: r.timestamp || 0
-        });
-      }
-    });
-
-    const historico = rawHistory.sort((a, b) => a.timestamp - b.timestamp);
-    return { ncPendentes, historico };
-  }
-
-  // 1. Get unresolved NCs (where solucao is "")
-  const pendingQuery = query(
-    collection(db, "registros"),
-    where("solucao", "==", "")
-  );
-  const pendingSnapshot = await getDocs(pendingQuery);
-  const ncPendentes: NCPendente[] = [];
+  const registros = await fbObterTodosRegistros(setorId);
   
-  pendingSnapshot.forEach(docSnap => {
-    const r = docSnap.data() as Registro;
-    const docId = docSnap.id;
+  // 1. Get unresolved NCs
+  const ncPendentes: NCPendente[] = [];
+  registros.forEach(r => {
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) return;
+
+    const solucao = r.solucao ? r.solucao.trim() : "";
+    if (solucao !== "") return; // Already resolved
 
     const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
     if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-") {
       ncPendentes.push({
-        linha: docId as any,
+        linha: r.linha,
         colaborador: r.colaborador || "NÃO INFORMADO",
         responsavel: r.responsavel || "NÃO INFORMADO",
         problema: r.naoConformidade,
@@ -722,17 +754,9 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
     }
   });
 
-  // 2. Get the 150 most recent records for the general NC history tab
-  const historyQuery = query(
-    collection(db, "registros"),
-    orderBy("timestamp", "desc"),
-    limit(150)
-  );
-  const historySnapshot = await getDocs(historyQuery);
+  // 2. Get history (sorted descending by timestamp)
   const rawHistory: any[] = [];
-  
-  historySnapshot.forEach(docSnap => {
-    const r = docSnap.data() as Registro;
+  registros.forEach(r => {
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) return;
 
@@ -758,49 +782,16 @@ export async function fbObterAlertas(setorId?: string): Promise<{ ncPendentes: N
     }
   });
 
-  // We sort/reverse to keep it ascending so the frontend's slice().reverse() makes it descending
-  const historico = rawHistory.sort((a, b) => a.timestamp - b.timestamp);
-
+  const historico = rawHistory.sort((a, b) => b.timestamp - a.timestamp);
   return { ncPendentes, historico };
 }
 
 export async function fbObterUltimoMotivo(maquina: string, setorId?: string): Promise<string> {
-  if (isOfflineMode()) {
-    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
-    const sorted = [...registros].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    const subset = sorted.slice(0, 200);
+  const registros = await fbObterTodosRegistros(setorId);
+  // Records are already ordered chronologically (or reverse), let's sort desc
+  const sorted = [...registros].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-    for (const r of subset) {
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) continue;
-
-      if (r.maquina === maquina.toUpperCase()) {
-        const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "";
-        const motivo = r.motivoDMM ? r.motivoDMM.trim() : "";
-        const solucao = r.solucao ? r.solucao.trim() : "";
-
-        if (statusDMM === "SIM" && solucao === "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-          return "";
-        }
-        if (statusDMM === "NÃO" && solucao !== "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-          return (motivo !== "" && motivo !== "-") ? motivo : "";
-        }
-      }
-    }
-    return "";
-  }
-
-  // Query only the last 200 records across all machines (instead of ALL records of all time)
-  const q = query(
-    collection(db, "registros"),
-    orderBy("timestamp", "desc"),
-    limit(200)
-  );
-  const snapshot = await getDocs(q);
-  let motivoEncontrado = "";
-
-  for (const d of snapshot.docs) {
-    const r = d.data() as Registro;
+  for (const r of sorted) {
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) continue;
 
@@ -817,136 +808,28 @@ export async function fbObterUltimoMotivo(maquina: string, setorId?: string): Pr
       }
     }
   }
-  return motivoEncontrado;
+  return "";
 }
 
 export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas: ParadaItem[]; desvios: DesvioItem[] }> {
-  if (isOfflineMode()) {
-    let maquinasSetor: string[] = [];
-    if (setorId) {
-      const setores = JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
-      const sFound = setores.find(s => s.id === setorId);
-      if (sFound) {
-        maquinasSetor = sFound.maquinas || [];
-      }
-    }
-    if (maquinasSetor.length === 0) {
-      maquinasSetor = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
-    }
-
-    const { data: hojeStr, hora: horaAtualStr } = getFormatoBrasil();
-    const minutosAgora = parseHoraParaMinutos(horaAtualStr);
-
-    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
-    const registrosHoje = registros.filter(r => r.data === hojeStr);
-
-    const paradas: ParadaItem[] = [];
-    const desvios: DesvioItem[] = [];
-
-    const estadoMaq: {
-      [key: string]: {
-        ultimaMedicaoMinutos: number | null;
-        formatada: string;
-        divergencia: boolean;
-        motivo: string;
-        linha?: string;
-        comentarioSupervisor?: string;
-        codAlternativo?: string;
-      };
-    } = {};
-
-    maquinasSetor.forEach(m => {
-      estadoMaq[m] = {
-        ultimaMedicaoMinutos: null,
-        formatada: "S/R",
-        divergencia: false,
-        motivo: ""
-      };
-    });
-
-    const registrosOrdenados = [...registrosHoje].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-    registrosOrdenados.forEach(r => {
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const maq = r.maquina ? r.maquina.toUpperCase().trim() : "";
-      if (!estadoMaq[maq]) {
-        estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "" };
-      }
-
-      const mins = parseHoraParaMinutos(r.hora);
-      const u = estadoMaq[maq].ultimaMedicaoMinutos;
-      if (u === null || mins > u) {
-        estadoMaq[maq].ultimaMedicaoMinutos = mins;
-        estadoMaq[maq].formatada = r.hora.substring(0, 5);
-      }
-
-      const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "SIM";
-      const solucao = r.solucao ? r.solucao.trim() : "";
-      const motivo = r.motivoDMM ? r.motivoDMM.trim() : "";
-
-      if (statusDMM === "NÃO" && solucao !== "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-        estadoMaq[maq].divergencia = true;
-        estadoMaq[maq].linha = r.linha;
-        estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
-        estadoMaq[maq].codAlternativo = r.codAlternativo || "";
-        if (motivo !== "" && motivo !== "-") {
-          estadoMaq[maq].motivo = motivo;
-        }
-      } else if (statusDMM === "SIM" && solucao === "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-        estadoMaq[maq].divergencia = false;
-        estadoMaq[maq].motivo = "";
-        estadoMaq[maq].linha = undefined;
-        estadoMaq[maq].comentarioSupervisor = undefined;
-        estadoMaq[maq].codAlternativo = undefined;
-      }
-    });
-
-    const minutosLimite = 60;
-    maquinasSetor.forEach(m => {
-      const u = estadoMaq[m].ultimaMedicaoMinutos;
-      if (u === null || (minutosAgora - u) > minutosLimite) {
-        paradas.push({
-          maq: m,
-          hora: u !== null ? estadoMaq[m].formatada : "S/R"
-        });
-      }
-
-      if (estadoMaq[m].divergencia) {
-        desvios.push({
-          maq: m,
-          motivo: estadoMaq[m].motivo || "Divergência",
-          linha: estadoMaq[m].linha as any,
-          comentarioSupervisor: estadoMaq[m].comentarioSupervisor,
-          codAlternativo: estadoMaq[m].codAlternativo
-        });
-      }
-    });
-
-    return { paradas, desvios };
-  }
-
-  // Obter maquinas
   let maquinasSetor: string[] = [];
   if (setorId) {
-    const sDoc = await getDoc(doc(db, "setores", setorId));
-    if (sDoc.exists()) {
-      maquinasSetor = (sDoc.data() as Setor).maquinas || [];
+    const setores = await fbObterSetores();
+    const sFound = setores.find(s => s.id === setorId);
+    if (sFound) {
+      maquinasSetor = sFound.maquinas || [];
     }
   }
   if (maquinasSetor.length === 0) {
-    const globalDoc = await getDoc(doc(db, "config", "cadastro"));
-    if (globalDoc.exists()) {
-      maquinasSetor = (globalDoc.data() as any).maquinas || [];
-    }
+    maquinasSetor = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
   }
 
   const { data: hojeStr, hora: horaAtualStr } = getFormatoBrasil();
   const minutosAgora = parseHoraParaMinutos(horaAtualStr);
 
-  const snapshot = await getDocs(query(collection(db, "registros"), where("data", "==", hojeStr)));
-  
+  const registros = await fbObterTodosRegistros(setorId);
+  const registrosHoje = registros.filter(r => r.data === hojeStr);
+
   const paradas: ParadaItem[] = [];
   const desvios: DesvioItem[] = [];
 
@@ -971,43 +854,31 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
     };
   });
 
-  // Sort today's records chronologically to prevent random state flipping
-  const docs = snapshot.docs.map(docSnap => ({
-    id: docSnap.id,
-    data: docSnap.data() as Registro
-  }));
-  docs.sort((a, b) => {
-    const tA = a.data.timestamp || 0;
-    const tB = b.data.timestamp || 0;
-    if (tA !== tB) {
-      return tA - tB;
-    }
-    return (a.data.hora || "").localeCompare(b.data.hora || "");
-  });
+  const registrosOrdenados = [...registrosHoje].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-  docs.forEach(({ id, data: r }) => {
+  registrosOrdenados.forEach(r => {
     const rSetorId = r.setorId || "t-automatico";
     if (setorId && rSetorId !== setorId) return;
 
-    const maq = r.maquina;
+    const maq = r.maquina ? r.maquina.toUpperCase().trim() : "";
     if (!estadoMaq[maq]) {
       estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "" };
     }
 
-    const minutosReg = parseHoraParaMinutos(r.hora);
-    const atualUltimaMinutos = estadoMaq[maq].ultimaMedicaoMinutos;
-    if (atualUltimaMinutos === null || minutosReg > atualUltimaMinutos) {
-      estadoMaq[maq].ultimaMedicaoMinutos = minutosReg;
+    const mins = parseHoraParaMinutos(r.hora);
+    const u = estadoMaq[maq].ultimaMedicaoMinutos;
+    if (u === null || mins > u) {
+      estadoMaq[maq].ultimaMedicaoMinutos = mins;
       estadoMaq[maq].formatada = r.hora.substring(0, 5);
     }
 
-    const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "";
-    const motivo = r.motivoDMM ? r.motivoDMM.trim() : "";
+    const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "SIM";
     const solucao = r.solucao ? r.solucao.trim() : "";
+    const motivo = r.motivoDMM ? r.motivoDMM.trim() : "";
 
     if (statusDMM === "NÃO" && solucao !== "DIVERGÊNCIA VERIFICADA E LIBERADA") {
       estadoMaq[maq].divergencia = true;
-      estadoMaq[maq].linha = id;
+      estadoMaq[maq].linha = r.linha;
       estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
       estadoMaq[maq].codAlternativo = r.codAlternativo || "";
       if (motivo !== "" && motivo !== "-") {
@@ -1047,37 +918,9 @@ export async function fbObterMonitoramento(setorId?: string): Promise<{ paradas:
 }
 
 export async function fbSalvarMedicao(dados: Partial<Registro>, setorId?: string): Promise<void> {
-  if (isOfflineMode()) {
-    const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
-    const novoRegistro: any = {
-      linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-      setorId: setorId || "t-automatico",
-      data: dataHoje,
-      hora: horaHoje,
-      colaborador: (dados.colaborador || "").toUpperCase(),
-      maquina: (dados.maquina || "").toUpperCase(),
-      conforme: dados.conforme || "SIM",
-      naoConformidade: dados.naoConformidade || "OK",
-      codigoPeca: dados.codigoPeca || "-",
-      responsavel: dados.responsavel || "-",
-      usoDMM: dados.usoDMM || "SIM",
-      motivoDMM: dados.motivoDMM || "-",
-      solucao: "",
-      trocaFerramenta: dados.trocaFerramenta || "NÃO",
-      oQueTrocou: dados.oQueTrocou || "-",
-      quemTrocou: dados.quemTrocou || "-",
-      modeloPeca: dados.modeloPeca || "-",
-      codAlternativo: (dados.codAlternativo || "-").toUpperCase(),
-      timestamp: Date.now()
-    };
-    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]");
-    registros.push(novoRegistro);
-    localStorage.setItem("local_registros", JSON.stringify(registros));
-    return;
-  }
-
   const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
-  const novoRegistro: Partial<Registro> & { timestamp: number } = {
+  const novoRegistro: any = {
+    linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
     setorId: setorId || "t-automatico",
     data: dataHoje,
     hora: horaHoje,
@@ -1097,7 +940,15 @@ export async function fbSalvarMedicao(dados: Partial<Registro>, setorId?: string
     codAlternativo: (dados.codAlternativo || "-").toUpperCase(),
     timestamp: Date.now()
   };
-  await addDoc(collection(db, "registros"), novoRegistro);
+
+  if (isOfflineMode()) {
+    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]");
+    registros.push(novoRegistro);
+    localStorage.setItem("local_registros", JSON.stringify(registros));
+    return;
+  }
+
+  await adicionarLinhaAba("registros", registroToRow(novoRegistro));
 }
 
 export async function fbResolverNC(docId: string, solucao: string, quemResolveu?: string): Promise<void> {
@@ -1114,61 +965,25 @@ export async function fbResolverNC(docId: string, solucao: string, quemResolveu?
     return;
   }
 
-  const cleanUpdates: any = {
-    solucao: solucao.trim()
-  };
-  if (quemResolveu) {
-    cleanUpdates.quemResolveu = quemResolveu.trim().toUpperCase();
+  const rows = await lerAba("registros");
+  const rowIndex = rows.findIndex(row => row[0] === docId);
+  if (rowIndex === -1) {
+    throw new Error("Registro não encontrado");
   }
-  await updateDoc(doc(db, "registros", docId), cleanUpdates);
+
+  const r = parsedRegistroRow(rows[rowIndex]);
+  r.solucao = solucao.trim();
+  if (quemResolveu) {
+    r.quemResolveu = quemResolveu.trim().toUpperCase();
+  }
+
+  await atualizarLinhaAba("registros", rowIndex + 1, registroToRow(r));
 }
 
 export async function fbLiberarDivergencia(docId: string, maquina: string, colaboradorSupervisor: string, setorId?: string): Promise<void> {
-  if (isOfflineMode()) {
-    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
-    if (docId) {
-      const idx = registros.findIndex(r => r.linha === docId);
-      if (idx !== -1) {
-        registros[idx].solucao = "DIVERGÊNCIA VERIFICADA E LIBERADA";
-        registros[idx].quemResolveu = colaboradorSupervisor.toUpperCase();
-      }
-    }
-
-    const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
-    const registroSupervisor: any = {
-      linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-      setorId: setorId || "t-automatico",
-      data: dataHoje,
-      hora: horaHoje,
-      colaborador: colaboradorSupervisor.toUpperCase(),
-      maquina: maquina.toUpperCase(),
-      conforme: "SIM",
-      naoConformidade: "OK",
-      codigoPeca: "-",
-      responsavel: "-",
-      usoDMM: "SIM",
-      motivoDMM: "-",
-      solucao: "DIVERGÊNCIA VERIFICADA E LIBERADA",
-      trocaFerramenta: "NÃO",
-      oQueTrocou: "-",
-      quemTrocou: "-",
-      modeloPeca: "-",
-      timestamp: Date.now()
-    };
-    registros.push(registroSupervisor);
-    localStorage.setItem("local_registros", JSON.stringify(registros));
-    return;
-  }
-
-  if (docId) {
-    await updateDoc(doc(db, "registros", docId), {
-      solucao: "DIVERGÊNCIA VERIFICADA E LIBERADA",
-      quemResolveu: colaboradorSupervisor.toUpperCase()
-    });
-  }
-
   const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
-  const registroSupervisor: Partial<Registro> & { timestamp: number } = {
+  const registroSupervisor: any = {
+    linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
     setorId: setorId || "t-automatico",
     data: dataHoje,
     hora: horaHoje,
@@ -1178,7 +993,7 @@ export async function fbLiberarDivergencia(docId: string, maquina: string, colab
     naoConformidade: "OK",
     codigoPeca: "-",
     responsavel: "-",
-    usoDMM: "SIM", // Liberado
+    usoDMM: "SIM",
     motivoDMM: "-",
     solucao: "DIVERGÊNCIA VERIFICADA E LIBERADA",
     trocaFerramenta: "NÃO",
@@ -1187,7 +1002,33 @@ export async function fbLiberarDivergencia(docId: string, maquina: string, colab
     modeloPeca: "-",
     timestamp: Date.now()
   };
-  await addDoc(collection(db, "registros"), registroSupervisor);
+
+  if (isOfflineMode()) {
+    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
+    if (docId) {
+      const idx = registros.findIndex(r => r.linha === docId);
+      if (idx !== -1) {
+        registros[idx].solucao = "DIVERGÊNCIA VERIFICADA E LIBERADA";
+        registros[idx].quemResolveu = colaboradorSupervisor.toUpperCase();
+      }
+    }
+    registros.push(registroSupervisor);
+    localStorage.setItem("local_registros", JSON.stringify(registros));
+    return;
+  }
+
+  if (docId) {
+    const rows = await lerAba("registros");
+    const rowIndex = rows.findIndex(row => row[0] === docId);
+    if (rowIndex !== -1) {
+      const r = parsedRegistroRow(rows[rowIndex]);
+      r.solucao = "DIVERGÊNCIA VERIFICADA E LIBERADA";
+      r.quemResolveu = colaboradorSupervisor.toUpperCase();
+      await atualizarLinhaAba("registros", rowIndex + 1, registroToRow(r));
+    }
+  }
+
+  await adicionarLinhaAba("registros", registroToRow(registroSupervisor));
 }
 
 export async function fbObterTodosRegistros(setorId?: string): Promise<any[]> {
@@ -1198,24 +1039,20 @@ export async function fbObterTodosRegistros(setorId?: string): Promise<any[]> {
     return list.reverse();
   }
 
-  const q = query(
-    collection(db, "registros"),
-    orderBy("timestamp", "desc"),
-    limit(1500)
-  );
-  const snapshot = await getDocs(q);
-  const list: any[] = [];
-  snapshot.forEach(docSnap => {
-    const r = docSnap.data() as Registro;
-    const rSetorId = r.setorId || "t-automatico";
-    if (!setorId || rSetorId === setorId) {
-      list.push({
-        ...r,
-        linha: docSnap.id // Usar ID do doc como ID único de linha
-      });
-    }
-  });
-  return list.reverse();
+  try {
+    const rows = await lerAba("registros");
+    if (rows.length <= 1) return [];
+    const list = rows.slice(1).map(parsedRegistroRow);
+    const sorted = [...list].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const filtered = sorted.slice(0, 1500).filter(r => !setorId || r.setorId === setorId);
+    return filtered.reverse();
+  } catch (e) {
+    console.error("Erro ao obter todos os registros:", e);
+    const registros = JSON.parse(localStorage.getItem("local_registros") || "[]") as any[];
+    const sorted = [...registros].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const list = sorted.slice(0, 1500).filter(r => !setorId || r.setorId === setorId);
+    return list.reverse();
+  }
 }
 
 export async function fbExcluirRegistro(docId: string): Promise<void> {
@@ -1226,7 +1063,12 @@ export async function fbExcluirRegistro(docId: string): Promise<void> {
     return;
   }
 
-  await deleteDoc(doc(db, "registros", docId));
+  const rows = await lerAba("registros");
+  const rowIndex = rows.findIndex(row => row[0] === docId);
+  if (rowIndex === -1) {
+    throw new Error("Registro não encontrado");
+  }
+  await excluirLinhaAba("registros", rowIndex + 1);
 }
 
 export async function fbExcluirDivergenciasMaquinaHoje(maquina: string, setorId?: string): Promise<void> {
@@ -1244,25 +1086,25 @@ export async function fbExcluirDivergenciasMaquinaHoje(maquina: string, setorId?
   }
 
   const { data: hojeStr } = getFormatoBrasil();
-  const q = query(
-    collection(db, "registros"),
-    where("data", "==", hojeStr),
-    where("maquina", "==", maquina.toUpperCase())
-  );
-  const snapshot = await getDocs(q);
-  const batch = writeBatch(db);
-  let count = 0;
-  snapshot.forEach(docSnap => {
-    const r = docSnap.data() as Registro;
+  const rows = await lerAba("registros");
+  // Find all rows that match target criteria and collect indices
+  // To avoid index shifting during deletes, we can delete them starting from the bottom!
+  const rowsToDelete: number[] = [];
+  rows.forEach((row, index) => {
+    if (index === 0) return; // Header
+    const r = parsedRegistroRow(row);
     const rSetorId = r.setorId || "t-automatico";
     const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "";
-    if ((!setorId || rSetorId === setorId) && statusDMM === "NÃO") {
-      batch.delete(docSnap.ref);
-      count++;
+    const isTarget = r.data === hojeStr && r.maquina === maquina.toUpperCase() && statusDMM === "NÃO" && (!setorId || rSetorId === setorId);
+    if (isTarget) {
+      rowsToDelete.push(index + 1); // 1-based index
     }
   });
-  if (count > 0) {
-    await batch.commit();
+
+  // Sort descending to delete from bottom to top safely
+  rowsToDelete.sort((a, b) => b - a);
+  for (const rowIndex of rowsToDelete) {
+    await excluirLinhaAba("registros", rowIndex);
   }
 }
 
@@ -1277,53 +1119,37 @@ export async function fbAdicionarComentario(docId: string, comentario: string): 
     return;
   }
 
-  await updateDoc(doc(db, "registros", docId), {
-    comentarioSupervisor: comentario.trim().toUpperCase()
-  });
+  const rows = await lerAba("registros");
+  const rowIndex = rows.findIndex(row => row[0] === docId);
+  if (rowIndex === -1) {
+    throw new Error("Registro não encontrado");
+  }
+  const r = parsedRegistroRow(rows[rowIndex]);
+  r.comentarioSupervisor = comentario.trim().toUpperCase();
+  await atualizarLinhaAba("registros", rowIndex + 1, registroToRow(r));
 }
 
+// Dummy subscription functions since we now poll or reload on demand for sheets
 export function fbSubscreverCadastro(
   setorId: string | undefined,
   callback: (data: { colaboradores: string[]; maquinas: string[] }) => void,
   onError: (error: any) => void
 ): () => void {
-  let unsubscribes: (() => void)[] = [];
-
-  const handleUpdate = (sData: any, globalData: any) => {
-    let colabs = sData?.colaboradores || [];
-    let maqs = sData?.maquinas || [];
-
-    if (colabs.length === 0 || maqs.length === 0) {
-      if (colabs.length === 0) colabs = globalData?.colaboradores || [];
-      if (maqs.length === 0) maqs = globalData?.maquinas || [];
+  let active = true;
+  const poll = async () => {
+    while (active) {
+      try {
+        const data = await fbObterCadastro(setorId);
+        if (active) callback(data);
+      } catch (err) {
+        if (active) onError(err);
+      }
+      await new Promise(resolve => setTimeout(resolve, 30000));
     }
-
-    callback({ colaboradores: colabs, maquinas: maqs });
   };
-
-  let sectorData: any = null;
-  let globalData: any = null;
-
-  const unsubGlobal = onSnapshot(doc(db, "config", "cadastro"), (snap) => {
-    globalData = snap.data();
-    handleUpdate(sectorData, globalData);
-  }, (error) => {
-    onError(error);
-  });
-  unsubscribes.push(unsubGlobal);
-
-  if (setorId) {
-    const unsubSector = onSnapshot(doc(db, "setores", setorId), (snap) => {
-      sectorData = snap.data();
-      handleUpdate(sectorData, globalData);
-    }, (error) => {
-      onError(error);
-    });
-    unsubscribes.push(unsubSector);
-  }
-
+  poll();
   return () => {
-    unsubscribes.forEach(unsub => unsub());
+    active = false;
   };
 }
 
@@ -1332,144 +1158,21 @@ export function fbSubscreverMonitoramento(
   callback: (data: { paradas: ParadaItem[]; desvios: DesvioItem[] }) => void,
   onError: (error: any) => void
 ): () => void {
-  const { data: hojeStr } = getFormatoBrasil();
-  const q = query(collection(db, "registros"), where("data", "==", hojeStr));
-
-  let maquinasSetor: string[] = [];
-  let unsubscribes: (() => void)[] = [];
-
-  const updateData = (snapshotDocs: any[]) => {
-    const { hora: horaAtualStr } = getFormatoBrasil();
-    const minutosAgora = parseHoraParaMinutos(horaAtualStr);
-
-    const paradas: ParadaItem[] = [];
-    const desvios: DesvioItem[] = [];
-
-    const estadoMaq: {
-      [key: string]: {
-        ultimaMedicaoMinutos: number | null;
-        formatada: string;
-        divergencia: boolean;
-        motivo: string;
-        linha?: string;
-        comentarioSupervisor?: string;
-        codAlternativo?: string;
-      };
-    } = {};
-
-    maquinasSetor.forEach(m => {
-      estadoMaq[m] = {
-        ultimaMedicaoMinutos: null,
-        formatada: "S/R",
-        divergencia: false,
-        motivo: ""
-      };
-    });
-
-    const docs = snapshotDocs.map(docSnap => ({
-      id: docSnap.id,
-      data: docSnap.data() as Registro
-    }));
-    docs.sort((a, b) => {
-      const tA = a.data.timestamp || 0;
-      const tB = b.data.timestamp || 0;
-      if (tA !== tB) {
-        return tA - tB;
+  let active = true;
+  const poll = async () => {
+    while (active) {
+      try {
+        const data = await fbObterMonitoramento(setorId);
+        if (active) callback(data);
+      } catch (err) {
+        if (active) onError(err);
       }
-      return (a.data.hora || "").localeCompare(b.data.hora || "");
-    });
-
-    docs.forEach(({ id, data: r }) => {
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const maq = r.maquina;
-      if (!estadoMaq[maq]) {
-        estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "" };
-      }
-
-      const minutosReg = parseHoraParaMinutos(r.hora);
-      const atualUltimaMinutos = estadoMaq[maq].ultimaMedicaoMinutos;
-      if (atualUltimaMinutos === null || minutosReg > atualUltimaMinutos) {
-        estadoMaq[maq].ultimaMedicaoMinutos = minutosReg;
-        estadoMaq[maq].formatada = r.hora.substring(0, 5);
-      }
-
-      const statusDMM = r.usoDMM ? r.usoDMM.toUpperCase().trim() : "";
-      const motivo = r.motivoDMM ? r.motivoDMM.trim() : "";
-      const solucao = r.solucao ? r.solucao.trim() : "";
-
-      if (statusDMM === "NÃO" && solucao !== "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-        estadoMaq[maq].divergencia = true;
-        estadoMaq[maq].linha = id;
-        estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
-        estadoMaq[maq].codAlternativo = r.codAlternativo || "";
-        if (motivo !== "" && motivo !== "-") {
-          estadoMaq[maq].motivo = motivo;
-        }
-      } else if (statusDMM === "SIM" && solucao === "DIVERGÊNCIA VERIFICADA E LIBERADA") {
-        estadoMaq[maq].divergencia = false;
-        estadoMaq[maq].motivo = "";
-        estadoMaq[maq].linha = undefined;
-        estadoMaq[maq].comentarioSupervisor = undefined;
-        estadoMaq[maq].codAlternativo = undefined;
-      }
-    });
-
-    const minutosLimite = 60;
-    maquinasSetor.forEach(m => {
-      const u = estadoMaq[m].ultimaMedicaoMinutos;
-      if (u === null || (minutosAgora - u) > minutosLimite) {
-        paradas.push({
-          maq: m,
-          hora: u !== null ? estadoMaq[m].formatada : "S/R"
-        });
-      }
-
-      if (estadoMaq[m].divergencia) {
-        desvios.push({
-          maq: m,
-          motivo: estadoMaq[m].motivo,
-          linha: estadoMaq[m].linha,
-          comentarioSupervisor: estadoMaq[m].comentarioSupervisor,
-          codAlternativo: estadoMaq[m].codAlternativo
-        });
-      }
-    });
-
-    callback({ paradas, desvios });
-  };
-
-  const init = async () => {
-    try {
-      if (setorId) {
-        const sDoc = await getDoc(doc(db, "setores", setorId));
-        if (sDoc.exists()) {
-          maquinasSetor = (sDoc.data() as Setor).maquinas || [];
-        }
-      }
-      if (maquinasSetor.length === 0) {
-        const globalDoc = await getDoc(doc(db, "config", "cadastro"));
-        if (globalDoc.exists()) {
-          maquinasSetor = (globalDoc.data() as any).maquinas || [];
-        }
-      }
-
-      const unsubRegs = onSnapshot(q, (snapshot) => {
-        updateData(snapshot.docs);
-      }, (error) => {
-        onError(error);
-      });
-      unsubscribes.push(unsubRegs);
-    } catch (err) {
-      onError(err);
+      await new Promise(resolve => setTimeout(resolve, 30000));
     }
   };
-
-  init();
-
+  poll();
   return () => {
-    unsubscribes.forEach(u => u());
+    active = false;
   };
 }
 
@@ -1478,92 +1181,20 @@ export function fbSubscreverAlertas(
   callback: (data: { ncPendentes: NCPendente[]; historico: HistoricoItem[] }) => void,
   onError: (error: any) => void
 ): () => void {
-  let ncPendentes: NCPendente[] = [];
-  let historico: HistoricoItem[] = [];
-
-  const pendingQuery = query(
-    collection(db, "registros"),
-    where("solucao", "==", "")
-  );
-
-  const historyQuery = query(
-    collection(db, "registros"),
-    orderBy("timestamp", "desc"),
-    limit(150)
-  );
-
-  const handlePendingUpdate = (snapshotDocs: any[]) => {
-    const list: NCPendente[] = [];
-    snapshotDocs.forEach(docSnap => {
-      const r = docSnap.data() as Registro;
-      const docId = docSnap.id;
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
-      if (textoNC !== "" && textoNC !== "OK" && textoNC !== "-") {
-        list.push({
-          linha: docId as any,
-          colaborador: r.colaborador || "NÃO INFORMADO",
-          responsavel: r.responsavel || "NÃO INFORMADO",
-          problema: r.naoConformidade,
-          maquina: r.maquina,
-          hora: r.hora.substring(0, 5),
-          data: r.data,
-          codigoPeca: r.codigoPeca || "-"
-        });
+  let active = true;
+  const poll = async () => {
+    while (active) {
+      try {
+        const data = await fbObterAlertas(setorId);
+        if (active) callback(data);
+      } catch (err) {
+        if (active) onError(err);
       }
-    });
-    ncPendentes = list;
-    callback({ ncPendentes, historico });
+      await new Promise(resolve => setTimeout(resolve, 30000));
+    }
   };
-
-  const handleHistoryUpdate = (snapshotDocs: any[]) => {
-    const rawHistory: any[] = [];
-    snapshotDocs.forEach(docSnap => {
-      const r = docSnap.data() as Registro;
-      const rSetorId = r.setorId || "t-automatico";
-      if (setorId && rSetorId !== setorId) return;
-
-      const textoNC = r.naoConformidade ? r.naoConformidade.trim().toUpperCase() : "";
-      const solucao = r.solucao ? r.solucao.trim() : "";
-      const isProblem = textoNC !== "OK" && textoNC !== "-" && textoNC !== "";
-
-      if (isProblem) {
-        const infoTroca = r.trocaFerramenta === "SIM" ? ` | TROCA: ${r.oQueTrocou} por ${r.quemTrocou}` : "";
-        const solucaoCompleta = solucao ? `${solucao}${infoTroca}` : `PENDENTE${infoTroca}`;
-        rawHistory.push({
-          data: r.data,
-          hora: r.hora.substring(0, 5),
-          maquina: r.maquina,
-          problema: textoNC,
-          responsavel: r.responsavel || "NÃO INFORMADO",
-          colaborador: r.colaborador || "NÃO INFORMADO",
-          solucao: solucaoCompleta,
-          codigoPeca: r.codigoPeca || "-",
-          quemResolveu: r.quemResolveu || "",
-          timestamp: r.timestamp || 0
-        });
-      }
-    });
-    historico = rawHistory.sort((a, b) => a.timestamp - b.timestamp);
-    callback({ ncPendentes, historico });
-  };
-
-  const unsubPending = onSnapshot(pendingQuery, (snapshot) => {
-    handlePendingUpdate(snapshot.docs);
-  }, (error) => {
-    onError(error);
-  });
-
-  const unsubHistory = onSnapshot(historyQuery, (snapshot) => {
-    handleHistoryUpdate(snapshot.docs);
-  }, (error) => {
-    onError(error);
-  });
-
+  poll();
   return () => {
-    unsubPending();
-    unsubHistory();
+    active = false;
   };
 }

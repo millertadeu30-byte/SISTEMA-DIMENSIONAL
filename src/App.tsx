@@ -12,6 +12,7 @@ import {
   Check,
   Plus,
   Trash2,
+  Download,
   Clock,
   Lock,
   ShieldAlert,
@@ -64,7 +65,11 @@ import {
   fbAtivarModoOffline,
   fbDesativarModoOffline,
   fbExportarBackup,
-  fbImportarBackup
+  fbImportarBackup,
+  googleSignIn,
+  logout,
+  initAuth,
+  limparDadosAba
 } from "./firebase";
 
 export default function App() {
@@ -644,11 +649,24 @@ export default function App() {
 
   // Inicialização e Carregamento de Dados
   useEffect(() => {
-    const initAndLoad = async () => {
-      await inicializarBancoFirebase();
-      await carregarSetores();
-    };
-    initAndLoad();
+    const unsubAuth = initAuth(
+      async (user, token) => {
+        setOfflineMode(false);
+        await inicializarBancoFirebase();
+        await carregarSetores();
+        const sAtivo = localStorage.getItem("setorAtivoId");
+        if (sAtivo) {
+          carregarCadastro(sAtivo);
+          carregarAlertas(sAtivo);
+          carregarMonitoramento(sAtivo);
+        }
+      },
+      async () => {
+        setOfflineMode(true);
+        await inicializarBancoFirebase();
+        await carregarSetores();
+      }
+    );
 
     // Atualiza relógio
     const updateTime = () => {
@@ -666,6 +684,7 @@ export default function App() {
     const intervalTime = setInterval(updateTime, 1000);
 
     return () => {
+      unsubAuth();
       clearInterval(intervalTime);
     };
   }, []);
@@ -816,11 +835,27 @@ export default function App() {
     alert("MODO OFFLINE DESATIVADO. O SISTEMA ESTÁ SE CONECTANDO AO BANCO DE DADOS FIREBASE EM NUVEM.");
   };
 
-  const exportarDadosParaTexto = () => {
+  const exportarDadosParaTexto = async () => {
     try {
-      const backupJson = fbExportarBackup();
+      let backupJson = "";
+      if (offlineMode) {
+        backupJson = fbExportarBackup();
+      } else {
+        setLoadingText("PREPARANDO BACKUP...");
+        const currentStep = step;
+        setStep("loading");
+        try {
+          const setoresList = await fbObterSetores();
+          const registrosList = await fbObterTodosRegistros();
+          backupJson = JSON.stringify({ setores: setoresList, registros: registrosList }, null, 2);
+        } catch (err: any) {
+          setStep(currentStep);
+          throw new Error("Erro ao obter dados da planilha: " + err.message);
+        }
+        setStep(currentStep);
+      }
+
       setBackupTextarea(backupJson);
-      // Also download as a file automatically!
       const blob = new Blob([backupJson], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -830,9 +865,33 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (e) {
+      alert("BACKUP EXPORTADO COM SUCESSO!");
+    } catch (e: any) {
       console.error(e);
-      alert("Erro ao exportar dados.");
+      alert("Erro ao exportar dados: " + e.message);
+    }
+  };
+
+  const limparPlanilhaGoogle = async () => {
+    if (!isAdmin) {
+      alert("APENAS O ADMINISTRADOR PODE REALIZAR ESTA AÇÃO!");
+      return;
+    }
+    const confirmado = confirm("ATENÇÃO: DESEJA REALMENTE LIMPAR TODOS OS DADOS DA PLANILHA GOOGLE?\\nTodos os registros de medição serão apagados permanentemente da planilha (salve um backup antes!). Os setores e configurações serão preservados.");
+    if (!confirmado) return;
+
+    try {
+      setLoadingText("LIMPANDO PLANILHA...");
+      const currentStep = step;
+      setStep("loading");
+      await limparDadosAba("registros");
+      // Re-seed if needed
+      await inicializarBancoFirebase();
+      setStep(currentStep);
+      alert("PLANILHA GOOGLE LIMPA COM SUCESSO! ELA ESTÁ LEVE E RÁPIDA NOVAMENTE.");
+    } catch (err: any) {
+      setStep("config");
+      alert("Erro ao limpar planilha: " + err.message);
     }
   };
 
@@ -1404,7 +1463,38 @@ export default function App() {
               {setorSelecionado ? setorSelecionado.titulo : "SISTEMA DIMENSIONAL TCNC"}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs md:text-sm font-mono text-slate-400 bg-slate-900 px-3.5 py-2 rounded-2xl border border-slate-800">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs md:text-sm font-mono text-slate-400 bg-slate-900 px-3.5 py-2 rounded-2xl border border-slate-800">
+            {offlineMode ? (
+              <button
+                onClick={async () => {
+                  try {
+                    const result = await googleSignIn();
+                    if (result) {
+                      setOfflineMode(false);
+                      await inicializarBancoFirebase();
+                      await carregarSetores();
+                      if (setorSelecionado) {
+                        await carregarCadastro(setorSelecionado.id);
+                        await carregarAlertas(setorSelecionado.id);
+                        await carregarMonitoramento(setorSelecionado.id);
+                      }
+                      alert("CONECTADO À PLANILHA GOOGLE COM SUCESSO!");
+                    }
+                  } catch (e: any) {
+                    alert("Erro ao conectar com Google: " + e.message);
+                  }
+                }}
+                className="bg-amber-600 hover:bg-amber-500 hover:scale-[1.02] active:scale-[0.98] text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-lg transition uppercase flex items-center gap-1 cursor-pointer"
+                title="Sincronizar e salvar dados na Planilha Google em tempo real"
+              >
+                📥 CONECTAR PLANILHA
+              </button>
+            ) : (
+              <span className="text-emerald-400 font-black text-[10px] sm:text-xs px-2.5 py-1 bg-emerald-950/40 border border-emerald-900/50 rounded-lg uppercase flex items-center gap-1">
+                🟢 CONECTADO À PLANILHA
+              </span>
+            )}
+            <span className="text-slate-600">|</span>
             <span className="flex items-center gap-1.5 text-slate-300">
               <Clock size={14} className="text-blue-400" /> {currentTime} (BRT)
             </span>
@@ -2597,66 +2687,42 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Barra de Sincronização e Modo Offline (Apenas Admin) */}
+                    {/* Painel do Administrador (Apenas Admin) */}
                     {isAdmin && (
-                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-md">
-                        <div className="flex items-center gap-3">
-                          {offlineMode ? (
-                            <div className="flex items-center gap-2">
-                              <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
-                              <span className="text-xs md:text-sm font-black font-mono tracking-wide text-emerald-400 uppercase">
-                                🟢 MODO LOCAL ATIVADO (100% GRATUITO & ILIMITADO)
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="h-3 w-3 rounded-full bg-blue-500" />
-                              <span className="text-xs md:text-sm font-black font-mono tracking-wide text-blue-400 uppercase">
-                                🔵 CONECTADO EM NUVEM (FIREBASE CLOUD)
-                              </span>
-                            </div>
-                          )}
+                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-6 shadow-2xl relative overflow-hidden">
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-blue-900/40 border border-blue-800/60 rounded-xl text-blue-400">
+                            <ShieldAlert size={24} />
+                          </div>
+                          <div>
+                            <h3 className="font-mono text-base font-bold text-white tracking-wider uppercase">
+                              PAINEL DO ADMINISTRADOR (SENHA: 8619)
+                            </h3>
+                            <p className="text-xs text-slate-400 mt-1 max-w-md">
+                              Se a planilha estiver muito pesada ou lenta, faça o download do backup dos dados e use o botão de limpeza para torná-la leve novamente.
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {offlineMode ? (
-                            <>
-                              <button
-                                onClick={exportarDadosParaTexto}
-                                className="bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/50 hover:border-emerald-700/60 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
-                                title="Fazer backup/exportar registros e setores locais"
-                              >
-                                <History size={14} /> EXPORTAR BACKUP (.JSON)
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setImportFileError("");
-                                  setBackupTextarea("");
-                                  setShowBackupModal(true);
-                                }}
-                                className="bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-750 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
-                                title="Importar dados e setores salvos anteriormente"
-                              >
-                                <Settings size={14} /> IMPORTAR BACKUP
-                              </button>
-                              <button
-                                onClick={desativarModoOfflineLocal}
-                                className="bg-red-950/40 hover:bg-red-900/40 text-red-400 border border-red-900/50 hover:border-red-800/60 font-black text-[10px] sm:text-xs px-3.5 py-2 rounded-xl transition duration-150 uppercase tracking-wider cursor-pointer"
-                                title="Voltar a usar o Firebase Cloud"
-                              >
-                                CONECTAR CLOUD
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={ativarModoOfflineLocal}
-                                className="bg-emerald-600 hover:bg-emerald-700 hover:scale-[1.02] active:scale-[0.98] text-white font-black text-[10px] sm:text-xs px-4 py-2.5 rounded-xl transition duration-150 uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer"
-                                title="Salvar dados localmente no navegador de forma ilimitada e gratuita"
-                              >
-                                ⚡ ATIVAR MODO LOCAL OFFLINE (GRATUITO)
-                              </button>
-                            </>
-                          )}
+                        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
+                          <button
+                            onClick={exportarDadosParaTexto}
+                            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-4.5 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg hover:shadow-blue-900/30 cursor-pointer"
+                            title="Salvar cópia completa de todos os dados no computador"
+                          >
+                            <Download size={14} /> FAZER BACKUP (.JSON)
+                          </button>
+                          <button
+                            onClick={limparPlanilhaGoogle}
+                            disabled={offlineMode}
+                            className={`w-full sm:w-auto font-black text-xs px-4.5 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 border shadow-lg ${
+                              offlineMode
+                                ? "bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed"
+                                : "bg-red-950/40 hover:bg-red-900/40 text-red-400 border-red-900/50 hover:border-red-800/60 hover:shadow-red-950/30 cursor-pointer"
+                            }`}
+                            title={offlineMode ? "Conecte a planilha Google primeiro para poder limpar" : "Apagar registros de medições da planilha para torná-la leve"}
+                          >
+                            <Trash2 size={14} /> LIMPAR PLANILHA (TORNAR LEVE)
+                          </button>
                         </div>
                       </div>
                     )}
