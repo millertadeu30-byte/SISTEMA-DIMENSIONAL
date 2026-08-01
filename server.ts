@@ -1,12 +1,14 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import { Registro, NCPendente, HistoricoItem, ParadaItem, DesvioItem, Setor } from "./src/types.js";
 
 const app = express();
 const PORT = 3000;
 
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -734,6 +736,64 @@ app.post("/api/registros/:linha/comentar", async (req, res) => {
     res.json({ success: true, registro: registros[idx] });
   } catch (error) {
     res.status(500).json({ error: "Erro ao salvar comentário do supervisor" });
+  }
+});
+
+// 15. Obter token do Google para a Planilha (Serviço de Metadados ou Cache)
+app.get("/api/google-token", async (req, res) => {
+  try {
+    // 1. Tentar ler do servidor de metadados do Google Cloud Run (Produção)
+    const metadataUrl = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token?scopes=https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file";
+    
+    const response = await fetch(metadataUrl, {
+      headers: { "Metadata-Flavor": "Google" },
+    }).catch(() => null);
+
+    if (response && response.ok) {
+      const data: any = await response.json();
+      if (data && data.access_token) {
+        console.log("Token do Google obtido com sucesso via Metadata Server!");
+        return res.json({ accessToken: data.access_token });
+      }
+    }
+
+    // 2. Se falhar (ambiente local ou de teste), tenta ler de um arquivo local ou variável de ambiente
+    const tokenFile = path.join(DATA_DIR, "google-token.json");
+    if (fs.existsSync(tokenFile)) {
+      const data = JSON.parse(fs.readFileSync(tokenFile, "utf8"));
+      if (data && data.accessToken) {
+        console.log("Token do Google obtido com sucesso via cache local!");
+        return res.json({ accessToken: data.accessToken });
+      }
+    }
+
+    // Retorna null se não houver token disponível
+    return res.json({ accessToken: null });
+  } catch (error) {
+    console.error("Erro ao obter google-token:", error);
+    return res.json({ accessToken: null });
+  }
+});
+
+// 16. Salvar token do Google no servidor como backup/cache
+app.post("/api/save-google-token", (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    if (accessToken) {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(
+        path.join(DATA_DIR, "google-token.json"),
+        JSON.stringify({ accessToken, timestamp: Date.now() }, null, 2),
+        "utf8"
+      );
+      console.log("Novo token do Google salvo com sucesso no servidor!");
+      return res.json({ success: true });
+    }
+    return res.status(400).json({ error: "Token não fornecido" });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
   }
 });
 

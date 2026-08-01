@@ -97,6 +97,21 @@ export async function obterSheetId(sheetName: string): Promise<number> {
   return sheetIdsCache[sheetName];
 }
 
+export function getBackendUrl(): string {
+  if (typeof window === "undefined") return "";
+  const hostname = window.location.hostname;
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.includes("run.app") ||
+    hostname.includes("aistudio-preview.net")
+  ) {
+    return "";
+  }
+  // URL fixa do serviço no Cloud Run fornecido pelo AI Studio
+  return "https://ais-pre-ronann3digcd7qkrwc3nay-25708931279.us-west1.run.app";
+}
+
 // Active/offline mode toggled based on Google sign in state
 export function isOfflineMode(): boolean {
   return !cachedAccessToken;
@@ -137,18 +152,56 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+  let active = true;
+
+  // Primeiro tenta obter o token do backend
+  getAccessToken().then((token) => {
+    if (!active) return;
+    if (token) {
+      console.log("Autenticação automática concluída com sucesso usando o token do servidor!");
+      const mockUser = {
+        uid: "service-account",
+        email: "service-account@google.com",
+        displayName: "Conexão Direta Planilha",
+      } as unknown as User;
+      if (onAuthSuccess) onAuthSuccess(mockUser, token);
+    } else {
+      // Se não houver token no backend, usa o fluxo padrão do Firebase
+      onAuthStateChanged(auth, async (user: User | null) => {
+        if (!active) return;
+        if (user) {
+          if (cachedAccessToken) {
+            if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+          } else {
+            if (onAuthFailure) onAuthFailure();
+          }
+        } else {
+          cachedAccessToken = null;
+          if (onAuthFailure) onAuthFailure();
+        }
+      });
+    }
+  }).catch(() => {
+    if (!active) return;
+    // Fallback em caso de erro na requisição do backend
+    onAuthStateChanged(auth, async (user: User | null) => {
+      if (!active) return;
+      if (user) {
+        if (cachedAccessToken) {
+          if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+        } else {
+          if (onAuthFailure) onAuthFailure();
+        }
       } else {
+        cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
-    } else {
-      cachedAccessToken = null;
-      if (onAuthFailure) onAuthFailure();
-    }
+    });
   });
+
+  return () => {
+    active = false;
+  };
 };
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
@@ -175,7 +228,22 @@ export const logout = async () => {
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (cachedAccessToken) return cachedAccessToken;
+
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/google-token`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.accessToken) {
+        cachedAccessToken = data.accessToken;
+        return cachedAccessToken;
+      }
+    }
+  } catch (e) {
+    console.warn("Erro ao buscar google-token do servidor:", e);
+  }
+
+  return null;
 };
 
 // Seeding and initializing Google Sheets structures

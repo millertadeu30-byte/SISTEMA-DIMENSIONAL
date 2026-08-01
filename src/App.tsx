@@ -69,7 +69,9 @@ import {
   googleSignIn,
   logout,
   initAuth,
-  limparDadosAba
+  limparDadosAba,
+  getBackendUrl,
+  getAccessToken
 } from "./firebase";
 
 export default function App() {
@@ -1468,6 +1470,22 @@ export default function App() {
               <button
                 onClick={async () => {
                   try {
+                    // 1. Tenta obter o token diretamente do backend primeiro (caso de Service Account)
+                    const token = await getAccessToken();
+                    if (token) {
+                      setOfflineMode(false);
+                      await inicializarBancoFirebase();
+                      await carregarSetores();
+                      if (setorSelecionado) {
+                        await carregarCadastro(setorSelecionado.id);
+                        await carregarAlertas(setorSelecionado.id);
+                        await carregarMonitoramento(setorSelecionado.id);
+                      }
+                      alert("CONECTADO À PLANILHA GOOGLE AUTOMATICAMENTE COM SUCESSO!");
+                      return;
+                    }
+
+                    // 2. Se não houver token de servidor, realiza login Google no navegador
                     const result = await googleSignIn();
                     if (result) {
                       setOfflineMode(false);
@@ -1478,6 +1496,18 @@ export default function App() {
                         await carregarAlertas(setorSelecionado.id);
                         await carregarMonitoramento(setorSelecionado.id);
                       }
+                      
+                      // Salva o token no backend para outras unidades poderem usar de forma transparente!
+                      try {
+                        await fetch(`${getBackendUrl()}/api/save-google-token`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ accessToken: result.accessToken })
+                        });
+                      } catch (err) {
+                        console.warn("Erro ao registrar token no servidor:", err);
+                      }
+
                       alert("CONECTADO À PLANILHA GOOGLE COM SUCESSO!");
                     }
                   } catch (e: any) {
@@ -2701,6 +2731,22 @@ export default function App() {
                             <p className="text-xs text-slate-400 mt-1 max-w-md">
                               Se a planilha estiver muito pesada ou lenta, faça o download do backup dos dados e use o botão de limpeza para torná-la leve novamente.
                             </p>
+                            <div className="mt-3 p-3.5 bg-slate-900/60 border border-slate-800 rounded-xl text-[11px] font-mono leading-relaxed text-slate-300 max-w-2xl">
+                              <span className="text-emerald-400 font-bold uppercase block mb-1">🔌 CONEXÃO DE PLANILHA 100% AUTOMÁTICA NAS OUTRAS UNIDADES:</span>
+                              Para que todas as unidades e operadores fiquem conectados automaticamente à planilha sem precisar de login do Google ou dar erros de domínio (como no Vercel):
+                              <ol className="list-decimal list-inside mt-1.5 space-y-1 text-slate-400">
+                                <li>Abra a sua Planilha Google no computador.</li>
+                                <li>Clique em <strong className="text-white">Compartilhar</strong> no canto superior direito.</li>
+                                <li>Adicione o seguinte e-mail de serviço como <strong className="text-emerald-400">Editor</strong>:</li>
+                                <li className="bg-slate-950 px-2 py-1 rounded text-white select-all text-center font-bold border border-slate-800/80 my-1 block">
+                                  ais-sandbox@ais-us-west1-fadcee0dbae748588.iam.gserviceaccount.com
+                                </li>
+                                <li>Clique em <strong className="text-white">Enviar</strong> para salvar.</li>
+                              </ol>
+                              <span className="block mt-2 text-slate-400">
+                                Pronto! Feito isso, o sistema se conectará de forma totalmente transparente e segura em qualquer dispositivo.
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
