@@ -685,9 +685,15 @@ export default function App() {
     updateTime();
     const intervalTime = setInterval(updateTime, 1000);
 
+    const handleQuotaExceeded = () => {
+      setDbError("quota");
+    };
+    window.addEventListener("firebase-quota-exceeded", handleQuotaExceeded);
+
     return () => {
       unsubAuth();
       clearInterval(intervalTime);
+      window.removeEventListener("firebase-quota-exceeded", handleQuotaExceeded);
     };
   }, []);
 
@@ -1466,65 +1472,6 @@ export default function App() {
             </h1>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs md:text-sm font-mono text-slate-400 bg-slate-900 px-3.5 py-2 rounded-2xl border border-slate-800">
-            {offlineMode ? (
-              <button
-                onClick={async () => {
-                  try {
-                    // 1. Tenta obter o token diretamente do backend primeiro (caso de Service Account)
-                    const token = await getAccessToken();
-                    if (token) {
-                      setOfflineMode(false);
-                      await inicializarBancoFirebase();
-                      await carregarSetores();
-                      if (setorSelecionado) {
-                        await carregarCadastro(setorSelecionado.id);
-                        await carregarAlertas(setorSelecionado.id);
-                        await carregarMonitoramento(setorSelecionado.id);
-                      }
-                      alert("CONECTADO À PLANILHA GOOGLE AUTOMATICAMENTE COM SUCESSO!");
-                      return;
-                    }
-
-                    // 2. Se não houver token de servidor, realiza login Google no navegador
-                    const result = await googleSignIn();
-                    if (result) {
-                      setOfflineMode(false);
-                      await inicializarBancoFirebase();
-                      await carregarSetores();
-                      if (setorSelecionado) {
-                        await carregarCadastro(setorSelecionado.id);
-                        await carregarAlertas(setorSelecionado.id);
-                        await carregarMonitoramento(setorSelecionado.id);
-                      }
-                      
-                      // Salva o token no backend para outras unidades poderem usar de forma transparente!
-                      try {
-                        await fetch(`${getBackendUrl()}/api/save-google-token`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ accessToken: result.accessToken })
-                        });
-                      } catch (err) {
-                        console.warn("Erro ao registrar token no servidor:", err);
-                      }
-
-                      alert("CONECTADO À PLANILHA GOOGLE COM SUCESSO!");
-                    }
-                  } catch (e: any) {
-                    alert("Erro ao conectar com Google: " + e.message);
-                  }
-                }}
-                className="bg-amber-600 hover:bg-amber-500 hover:scale-[1.02] active:scale-[0.98] text-white font-black text-[10px] sm:text-xs px-2.5 py-1 rounded-lg transition uppercase flex items-center gap-1 cursor-pointer"
-                title="Sincronizar e salvar dados na Planilha Google em tempo real"
-              >
-                📥 CONECTAR PLANILHA
-              </button>
-            ) : (
-              <span className="text-emerald-400 font-black text-[10px] sm:text-xs px-2.5 py-1 bg-emerald-950/40 border border-emerald-900/50 rounded-lg uppercase flex items-center gap-1">
-                🟢 CONECTADO À PLANILHA
-              </span>
-            )}
-            <span className="text-slate-600">|</span>
             <span className="flex items-center gap-1.5 text-slate-300">
               <Clock size={14} className="text-blue-400" /> {currentTime} (BRT)
             </span>
@@ -1745,7 +1692,7 @@ export default function App() {
                           }}
                           className="bg-slate-950/60 hover:bg-slate-950 border border-slate-800 hover:border-emerald-500/30 text-slate-400 hover:text-slate-200 font-bold px-3 py-2 rounded-xl text-[11px] flex items-center gap-1.5 shadow transition"
                         >
-                          <Search size={12} className="text-emerald-500/80" /> PLANILHA DE REGISTROS
+                          <Search size={12} className="text-emerald-500/80" /> TODOS OS REGISTROS
                         </button>
                         <button
                           onClick={() => setStep("historico")}
@@ -2729,24 +2676,8 @@ export default function App() {
                               PAINEL DO ADMINISTRADOR (SENHA: 8619)
                             </h3>
                             <p className="text-xs text-slate-400 mt-1 max-w-md">
-                              Se a planilha estiver muito pesada ou lenta, faça o download do backup dos dados e use o botão de limpeza para torná-la leve novamente.
+                              Faça o download do backup de segurança de todos os dados salvos no sistema para mantê-los seguros em seu computador.
                             </p>
-                            <div className="mt-3 p-3.5 bg-slate-900/60 border border-slate-800 rounded-xl text-[11px] font-mono leading-relaxed text-slate-300 max-w-2xl">
-                              <span className="text-emerald-400 font-bold uppercase block mb-1">🔌 CONEXÃO DE PLANILHA 100% AUTOMÁTICA NAS OUTRAS UNIDADES:</span>
-                              Para que todas as unidades e operadores fiquem conectados automaticamente à planilha sem precisar de login do Google ou dar erros de domínio (como no Vercel):
-                              <ol className="list-decimal list-inside mt-1.5 space-y-1 text-slate-400">
-                                <li>Abra a sua Planilha Google no computador.</li>
-                                <li>Clique em <strong className="text-white">Compartilhar</strong> no canto superior direito.</li>
-                                <li>Adicione o seguinte e-mail de serviço como <strong className="text-emerald-400">Editor</strong>:</li>
-                                <li className="bg-slate-950 px-2 py-1 rounded text-white select-all text-center font-bold border border-slate-800/80 my-1 block">
-                                  ais-sandbox@ais-us-west1-fadcee0dbae748588.iam.gserviceaccount.com
-                                </li>
-                                <li>Clique em <strong className="text-white">Enviar</strong> para salvar.</li>
-                              </ol>
-                              <span className="block mt-2 text-slate-400">
-                                Pronto! Feito isso, o sistema se conectará de forma totalmente transparente e segura em qualquer dispositivo.
-                              </span>
-                            </div>
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
@@ -2756,18 +2687,6 @@ export default function App() {
                             title="Salvar cópia completa de todos os dados no computador"
                           >
                             <Download size={14} /> FAZER BACKUP (.JSON)
-                          </button>
-                          <button
-                            onClick={limparPlanilhaGoogle}
-                            disabled={offlineMode}
-                            className={`w-full sm:w-auto font-black text-xs px-4.5 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 border shadow-lg ${
-                              offlineMode
-                                ? "bg-slate-900 border-slate-800 text-slate-500 cursor-not-allowed"
-                                : "bg-red-950/40 hover:bg-red-900/40 text-red-400 border-red-900/50 hover:border-red-800/60 hover:shadow-red-950/30 cursor-pointer"
-                            }`}
-                            title={offlineMode ? "Conecte a planilha Google primeiro para poder limpar" : "Apagar registros de medições da planilha para torná-la leve"}
-                          >
-                            <Trash2 size={14} /> LIMPAR PLANILHA (TORNAR LEVE)
                           </button>
                         </div>
                       </div>
@@ -3132,7 +3051,7 @@ export default function App() {
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
                         <div>
                           <h2 className="text-xl font-black text-emerald-400 flex items-center gap-2">
-                            <History size={22} className="text-emerald-500" /> PLANILHA DE REGISTROS ARQUIVADOS
+                            <History size={22} className="text-emerald-500" /> HISTÓRICO COMPLETO DE REGISTROS
                           </h2>
                           <p className="text-xs text-slate-400 mt-0.5">Banco de dados completo de medições, desvios e trocas de ferramentas</p>
                         </div>

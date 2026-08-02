@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Setor": {
+      "title": "Setor",
+      "description": "Setor de produção e medição dimensional",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "ID do setor" },
+        "titulo": { "type": "string", "description": "Nome descritivo do setor" },
+        "senha": { "type": "string", "description": "Senha opcional para acesso" },
+        "maquinas": { "type": "array", "description": "Lista de máquinas vinculadas" },
+        "colaboradores": { "type": "array", "description": "Lista de colaboradores vinculados" }
+      },
+      "required": ["id", "titulo"]
+    },
+    "Registro": {
+      "title": "Registro",
+      "description": "Registro de medição dimensional",
+      "type": "object",
+      "properties": {
+        "linha": { "type": "string", "description": "ID ou índice do registro" },
+        "setorId": { "type": "string", "description": "ID do setor" },
+        "data": { "type": "string", "description": "Data no formato DD/MM/AAAA" },
+        "hora": { "type": "string", "description": "Hora no formato HH:MM:SS" },
+        "colaborador": { "type": "string", "description": "Nome do operador" },
+        "maquina": { "type": "string", "description": "Código da máquina" },
+        "conforme": { "type": "string", "description": "Status de conformidade (SIM/NÃO)" },
+        "naoConformidade": { "type": "string", "description": "Descrição da não conformidade" },
+        "codigoPeca": { "type": "string", "description": "Código da peça medida" },
+        "responsavel": { "type": "string", "description": "Responsável pela liberação" },
+        "usoDMM": { "type": "string", "description": "Uso do DMM (SIM/NÃO)" },
+        "motivoDMM": { "type": "string", "description": "Motivo do desvio DMM" },
+        "solucao": { "type": "string", "description": "Solução aplicada para NC" },
+        "trocaFerramenta": { "type": "string", "description": "Houve troca de ferramenta (SIM/NÃO)" },
+        "oQueTrocou": { "type": "string", "description": "O que foi trocado" },
+        "quemTrocou": { "type": "string", "description": "Quem efetuou a troca" },
+        "modeloPeca": { "type": "string", "description": "Modelo da peça" },
+        "comentarioSupervisor": { "type": "string", "description": "Comentário do supervisor" },
+        "quemResolveu": { "type": "string", "description": "Quem resolveu a NC" },
+        "timestamp": { "type": "number", "description": "Timestamp epoch da gravação" }
+      },
+      "required": ["setorId", "data", "hora", "colaborador", "maquina", "conforme"]
+    }
+  },
+  "firestore": {
+    "setores": {
+      "schema": "Setor",
+      "description": "Coleção de setores de medição"
+    },
+    "registros": {
+      "schema": "Registro",
+      "description": "Coleção de registros de medições e NCs"
+    }
+  }
+}

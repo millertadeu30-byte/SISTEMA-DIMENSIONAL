@@ -1,7 +1,18 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default deny catch-all to prevent unauthorized access to system/other paths
     match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Allow public read and write access to the sectors collection
+    match /setores/{setorId} {
+      allow read, write: if true;
+    }
+
+    // Allow public read and write access to the records/registrations collection
+    match /registros/{registroId} {
       allow read, write: if true;
     }
   }
