@@ -970,15 +970,14 @@ export default function App() {
     setPayload(prev => ({ ...prev, maquina: maq }));
 
     try {
-      const motivo = await fbObterUltimoMotivo(maq, setorSelecionado?.id);
-      if (motivo) {
+      const resultadoMotivo = await fbObterUltimoMotivo(maq, setorSelecionado?.id);
+      if (resultadoMotivo && resultadoMotivo.motivo) {
         // Se tiver um motivo pendente de desvio DMM, pré-preenche o formulário temporário
-        setTempDMM(motivo);
-        setPayload(prev => ({ ...prev, usoDMM: "NÃO" }));
+        setTempDMM(resultadoMotivo.motivo);
       } else {
         setTempDMM("");
-        setPayload(prev => ({ ...prev, usoDMM: "SIM" }));
       }
+      setPayload(prev => ({ ...prev, usoDMM: "SIM" }));
     } catch (e) {
       console.error("Erro ao buscar último motivo:", e);
       setTempDMM("");
@@ -1915,7 +1914,7 @@ export default function App() {
                       </h2>
                     </div>
 
-                    {payload.usoDMM === "SIM" && !tempDMM && (
+                    {payload.usoDMM === "SIM" && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <button
                           onClick={() => setDMMConformidade(true)}
