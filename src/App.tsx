@@ -27,7 +27,8 @@ import {
   TrendingUp,
   Calendar,
   AlertCircle,
-  Award
+  Award,
+  Calculator
 } from "lucide-react";
 import {
   Registro,
@@ -137,6 +138,12 @@ export default function App() {
   const [acessoErro, setAcessoErro] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
   const [revelados, setRevelados] = useState<{[key: string]: boolean}>({});
+
+  // Estados para a calculadora de cota ideal
+  const [calcOpen, setCalcOpen] = useState(false);
+  const [calcNominal, setCalcNominal] = useState("");
+  const [calcPlus, setCalcPlus] = useState("");
+  const [calcMinus, setCalcMinus] = useState("");
 
   // Estados para o Admin Panel
   const [novoSetorTitulo, setNovoSetorTitulo] = useState("");
@@ -1469,6 +1476,16 @@ export default function App() {
             <h1 className="font-mono text-base md:text-lg font-bold tracking-widest text-blue-400 flex items-center gap-2 uppercase">
               {setorSelecionado ? setorSelecionado.titulo : "SISTEMA DIMENSIONAL TCNC"}
             </h1>
+            
+            {/* Botão Calculadora de Cota Ideal */}
+            <button
+              onClick={() => setCalcOpen(true)}
+              className="bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-blue-500/50 text-slate-300 hover:text-white px-2.5 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 transition shadow active:scale-95 cursor-pointer"
+              title="Calculadora de Cota Ideal"
+            >
+              <Calculator size={13} className="text-blue-400" />
+              <span className="font-bold">CALC. IDEAL</span>
+            </button>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs md:text-sm font-mono text-slate-400 bg-slate-900 px-3.5 py-2 rounded-2xl border border-slate-800">
             <span className="flex items-center gap-1.5 text-slate-300">
@@ -1501,6 +1518,176 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Calculadora de Cota Ideal Modal */}
+      <AnimatePresence>
+        {calcOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl relative"
+            >
+              {/* Header do Modal */}
+              <div className="bg-slate-950 px-5 py-4 border-b border-slate-800 flex justify-between items-center">
+                <h3 className="text-sm font-black tracking-widest text-blue-400 uppercase flex items-center gap-2">
+                  <Calculator size={16} /> CALCULADORA DE COTA IDEAL
+                </h3>
+                <button
+                  onClick={() => setCalcOpen(false)}
+                  className="text-slate-400 hover:text-white font-black text-lg transition p-1 hover:bg-slate-850 rounded-lg cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Corpo do Modal */}
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                    Cota Nominal
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: 50.00"
+                    value={calcNominal}
+                    onChange={(e) => setCalcNominal(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono text-center"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1">
+                      <span className="text-emerald-500 font-black">+</span> Tolerância (+)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 0.05"
+                      value={calcPlus}
+                      onChange={(e) => setCalcPlus(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono text-center"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1">
+                      <span className="text-red-500 font-black">-</span> Tolerância (-)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 0.02"
+                      value={calcMinus}
+                      onChange={(e) => setCalcMinus(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-red-500 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono text-center"
+                    />
+                  </div>
+                </div>
+
+                {/* Resultados em Tempo Real */}
+                <div className="bg-slate-950 border border-slate-800/85 rounded-xl p-4 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-xs text-slate-400">
+                    <span>LIMITE MÁXIMO:</span>
+                    <span className="text-slate-200 text-sm font-bold">
+                      {(() => {
+                        const nVal = parseFloat(calcNominal.replace(",", "."));
+                        const pVal = parseFloat(calcPlus.replace(",", "."));
+                        if (isNaN(nVal)) return "-";
+                        const max = nVal + (isNaN(pVal) ? 0 : pVal);
+                        return max.toFixed(4).replace(/\.?0+$/, "");
+                      })()}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs text-slate-400">
+                    <span>LIMITE MÍNIMO:</span>
+                    <span className="text-slate-200 text-sm font-bold">
+                      {(() => {
+                        const nVal = parseFloat(calcNominal.replace(",", "."));
+                        const mVal = parseFloat(calcMinus.replace(",", "."));
+                        if (isNaN(nVal)) return "-";
+                        let minusOffset = 0;
+                        if (!isNaN(mVal)) {
+                          minusOffset = mVal < 0 ? mVal : -mVal;
+                        }
+                        const min = nVal + minusOffset;
+                        return min.toFixed(4).replace(/\.?0+$/, "");
+                      })()}
+                    </span>
+                  </div>
+
+                  <div className="border-t border-slate-800 my-1"></div>
+
+                  <div className="flex justify-between items-center text-xs text-slate-300">
+                    <span className="text-blue-400 font-bold">COTA IDEAL:</span>
+                    <span className="text-blue-400 text-base font-black">
+                      {(() => {
+                        const nVal = parseFloat(calcNominal.replace(",", "."));
+                        const pVal = parseFloat(calcPlus.replace(",", "."));
+                        const mVal = parseFloat(calcMinus.replace(",", "."));
+                        if (isNaN(nVal)) return "-";
+                        
+                        const plusOffset = isNaN(pVal) ? 0 : pVal;
+                        let minusOffset = 0;
+                        if (!isNaN(mVal)) {
+                          minusOffset = mVal < 0 ? mVal : -mVal;
+                        }
+                        
+                        const max = nVal + plusOffset;
+                        const min = nVal + minusOffset;
+                        const ideal = (max + min) / 2;
+                        return ideal.toFixed(4).replace(/\.?0+$/, "");
+                      })()}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs text-slate-300">
+                    <span className="text-orange-400 font-bold">TOLERÂNCIA TOTAL:</span>
+                    <span className="text-orange-400 text-sm font-black">
+                      {(() => {
+                        const nVal = parseFloat(calcNominal.replace(",", "."));
+                        const pVal = parseFloat(calcPlus.replace(",", "."));
+                        const mVal = parseFloat(calcMinus.replace(",", "."));
+                        if (isNaN(nVal)) return "-";
+                        
+                        const plusOffset = isNaN(pVal) ? 0 : pVal;
+                        let minusOffset = 0;
+                        if (!isNaN(mVal)) {
+                          minusOffset = mVal < 0 ? mVal : -mVal;
+                        }
+                        
+                        const max = nVal + plusOffset;
+                        const min = nVal + minusOffset;
+                        const tol = max - min;
+                        return tol.toFixed(4).replace(/\.?0+$/, "");
+                      })()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    onClick={() => {
+                      setCalcNominal("");
+                      setCalcPlus("");
+                      setCalcMinus("");
+                    }}
+                    className="flex-1 bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                  >
+                    LIMPAR
+                  </button>
+                  <button
+                    onClick={() => setCalcOpen(false)}
+                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                  >
+                    FECHAR
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Alerta de NC pendente no topo */}
       {ncPendentes.length > 0 && step === 1 && (
