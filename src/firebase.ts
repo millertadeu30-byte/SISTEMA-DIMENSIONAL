@@ -112,7 +112,67 @@ export function fbExportarBackup(): string {
   return JSON.stringify({ setores, registros }, null, 2);
 }
 
-// Import backup into localStorage
+// Import/Restore backup to local storage, Cloud Run server, and Firestore
+export async function fbRestaurarBackupCompleto(jsonStr: string): Promise<void> {
+  try {
+    const backup = JSON.parse(jsonStr);
+    const setores = backup.setores || [];
+    const registros = backup.registros || [];
+
+    // 1. Guardar no localStorage
+    if (Array.isArray(setores) && setores.length > 0) {
+      localStorage.setItem("local_setores", JSON.stringify(setores));
+    }
+    if (Array.isArray(registros) && registros.length > 0) {
+      localStorage.setItem("local_registros", JSON.stringify(registros));
+    }
+
+    // 2. Enviar para o servidor Cloud Run
+    try {
+      const url = `${getBackendUrl()}/api/backup/restaurar`;
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ setores, registros })
+      });
+    } catch (e) {
+      console.warn("Aviso ao enviar backup ao servidor local:", e);
+    }
+
+    // 3. Tentar salvar no Firestore se houver conexão
+    try {
+      if (Array.isArray(setores) && setores.length > 0) {
+        const batchSetores = writeBatch(db);
+        setores.forEach((s: any) => {
+          if (s.id) {
+            const dRef = doc(db, "setores", s.id);
+            batchSetores.set(dRef, s, { merge: true });
+          }
+        });
+        await batchSetores.commit();
+      }
+
+      if (Array.isArray(registros) && registros.length > 0) {
+        const chunkSize = 400;
+        for (let i = 0; i < registros.length; i += chunkSize) {
+          const chunk = registros.slice(i, i + chunkSize);
+          const batchRegs = writeBatch(db);
+          chunk.forEach((r: any, idx: number) => {
+            const docId = r.linha || `reg-${Date.now()}-${i + idx}`;
+            const dRef = doc(db, "registros", docId);
+            batchRegs.set(dRef, { ...r, linha: docId }, { merge: true });
+          });
+          await batchRegs.commit();
+        }
+      }
+    } catch (e) {
+      console.warn("Aviso ao enviar backup ao Firestore:", e);
+    }
+  } catch (e: any) {
+    throw new Error("Formato de arquivo JSON inválido: " + e.message);
+  }
+}
+
 export function fbImportarBackup(jsonStr: string): void {
   try {
     const backup = JSON.parse(jsonStr);
@@ -475,6 +535,23 @@ export async function fbObterSetores(): Promise<Setor[]> {
     return JSON.parse(localStorage.getItem("local_setores") || "[]") as Setor[];
   }
 
+  const defaultSetoresPadrao: Setor[] = [
+    {
+      id: "dimensional-t-automatico",
+      titulo: "SISTEMA DIMENSIONAL TORNO AUT.",
+      senha: "1234",
+      maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
+      colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
+    },
+    {
+      id: "dimensional-t-cnc",
+      titulo: "SISTEMA DIMENSIONAL TCNC",
+      senha: "1234",
+      maquinas: ["04", "06", "07", "08", "09"],
+      colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
+    }
+  ];
+
   return executeWithFallback<Setor[]>(
     async () => {
       const q = collection(db, "setores");
@@ -485,31 +562,38 @@ export async function fbObterSetores(): Promise<Setor[]> {
       });
       
       if (list.length === 0) {
-        const defaultSetores: Setor[] = [
-          {
-            id: "dimensional-t-automatico",
-            titulo: "DIMENSIONAL T.AUTOMÁTICO",
-            senha: "1234",
-            maquinas: ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"],
-            colaboradores: ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"]
-          },
-          {
-            id: "dimensional-t-cnc",
-            titulo: "DIMENSIONAL T.CNC",
-            senha: "1234",
-            maquinas: ["04", "06", "07", "08", "09"],
-            colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
-          }
-        ];
-        
         const batch = writeBatch(db);
-        defaultSetores.forEach(s => {
+        defaultSetoresPadrao.forEach(s => {
           const dRef = doc(db, "setores", s.id);
           batch.set(dRef, s);
         });
         await batch.commit();
-        return defaultSetores;
+        return defaultSetoresPadrao;
       }
+
+      let mudou = false;
+      const batch = writeBatch(db);
+
+      // Verificar TORNO AUT
+      const temAut = list.some(s => s.id === "t-automatico" || s.id === "dimensional-t-automatico" || s.titulo.includes("TORNO AUT") || s.titulo.includes("AUTOMÁTICO"));
+      if (!temAut) {
+        list.unshift(defaultSetoresPadrao[0]);
+        batch.set(doc(db, "setores", defaultSetoresPadrao[0].id), defaultSetoresPadrao[0]);
+        mudou = true;
+      }
+
+      // Verificar TCNC
+      const temCNC = list.some(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
+      if (!temCNC) {
+        list.push(defaultSetoresPadrao[1]);
+        batch.set(doc(db, "setores", defaultSetoresPadrao[1].id), defaultSetoresPadrao[1]);
+        mudou = true;
+      }
+
+      if (mudou) {
+        try { await batch.commit(); } catch (e) { console.warn("Erro ao salvar setores padrão:", e); }
+      }
+
       return list;
     },
     async () => {

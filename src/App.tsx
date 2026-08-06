@@ -28,7 +28,9 @@ import {
   Calendar,
   AlertCircle,
   Award,
-  Calculator
+  Calculator,
+  Upload,
+  RotateCcw
 } from "lucide-react";
 import {
   Registro,
@@ -67,6 +69,7 @@ import {
   fbDesativarModoOffline,
   fbExportarBackup,
   fbImportarBackup,
+  fbRestaurarBackupCompleto,
   googleSignIn,
   logout,
   initAuth,
@@ -175,6 +178,7 @@ export default function App() {
   const [dataFiltroRegistrosInicio, setDataFiltroRegistrosInicio] = useState("");
   const [dataFiltroRegistrosFim, setDataFiltroRegistrosFim] = useState("");
   const [comentariosDivergencia, setComentariosDivergencia] = useState<{ [linha: number]: string }>({});
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const [maquinaFiltroRegistros, setMaquinaFiltroRegistros] = useState("");
   const [quemResolveuNC, setQuemResolveuNC] = useState<{ [linha: number]: string }>({});
   const [quemLiberouDMM, setQuemLiberouDMM] = useState<{ [maq: string]: string }>({});
@@ -858,6 +862,53 @@ export default function App() {
       console.error(e);
       alert("Erro ao exportar dados: " + e.message);
     }
+  };
+
+  const resetarConfiguracoesTablet = () => {
+    const comf = confirm("ATENÇÃO: Deseja realmente redefinir as configurações e limpar a memória local deste tablet?\n\nIsso removerá dados travados no navegador e forçará a recarga das informações limpas do servidor.");
+    if (comf) {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+      } catch (e) {
+        console.error(e);
+      }
+      window.location.reload();
+    }
+  };
+
+  const abrirSeletorBackup = () => {
+    if (backupFileInputRef.current) {
+      backupFileInputRef.current.click();
+    }
+  };
+
+  const importarBackupDoArquivo = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const content = e.target?.result as string;
+        if (!content) return;
+
+        setLoadingText("RESTAURANDO BACKUP...");
+        const currentStep = step;
+        setStep("loading");
+
+        await fbRestaurarBackupCompleto(content);
+
+        setStep(currentStep);
+        alert("BACKUP RESTAURADO COM SUCESSO! OS DADOS E REGISTROS FORAM ATUALIZADOS NO SISTEMA.");
+        await carregarSetores();
+        window.location.reload();
+      } catch (err: any) {
+        alert("Erro ao restaurar backup: " + (err?.message || err));
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = "";
   };
 
   const limparPlanilhaGoogle = async () => {
@@ -1711,6 +1762,12 @@ export default function App() {
                         >
                           🔄 REVERIFICAR CONEXÃO
                         </button>
+                        <button
+                          onClick={resetarConfiguracoesTablet}
+                          className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          🧹 RESETAR TABLET / LIMPAR CACHE
+                        </button>
                       </div>
                     </>
                   ) : (
@@ -1725,6 +1782,12 @@ export default function App() {
                           className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
                         >
                           🔄 TENTAR NOVAMENTE
+                        </button>
+                        <button
+                          onClick={resetarConfiguracoesTablet}
+                          className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          🧹 RESETAR TABLET / LIMPAR CACHE
                         </button>
                       </div>
                     </>
@@ -2839,6 +2902,13 @@ export default function App() {
                     {/* Painel do Administrador (Apenas Admin) */}
                     {isAdmin && (
                       <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-6 shadow-2xl relative overflow-hidden">
+                        <input
+                          type="file"
+                          ref={backupFileInputRef}
+                          accept=".json"
+                          className="hidden"
+                          onChange={importarBackupDoArquivo}
+                        />
                         <div className="flex items-center gap-4">
                           <div className="p-3 bg-blue-900/40 border border-blue-800/60 rounded-xl text-blue-400">
                             <ShieldAlert size={24} />
@@ -2848,17 +2918,31 @@ export default function App() {
                               PAINEL DO ADMINISTRADOR (SENHA: 8619)
                             </h3>
                             <p className="text-xs text-slate-400 mt-1 max-w-md">
-                              Faça o download do backup de segurança de todos os dados salvos no sistema para mantê-los seguros em seu computador.
+                              Gerencie backups de segurança do sistema, restaure backups do computador ou redefina as configurações deste tablet.
                             </p>
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
                           <button
                             onClick={exportarDadosParaTexto}
-                            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-4.5 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg hover:shadow-blue-900/30 cursor-pointer"
+                            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-black text-xs px-4 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg hover:shadow-blue-900/30 cursor-pointer"
                             title="Salvar cópia completa de todos os dados no computador"
                           >
                             <Download size={14} /> FAZER BACKUP (.JSON)
+                          </button>
+                          <button
+                            onClick={abrirSeletorBackup}
+                            className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-4 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg hover:shadow-emerald-900/30 cursor-pointer"
+                            title="Carregar um arquivo de backup (.json) salvo para restaurar os dados"
+                          >
+                            <Upload size={14} /> RECEBER BACKUP (.JSON)
+                          </button>
+                          <button
+                            onClick={resetarConfiguracoesTablet}
+                            className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-white font-black text-xs px-4 py-3 rounded-xl transition-all duration-150 uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg hover:shadow-amber-900/30 cursor-pointer"
+                            title="Limpar memória local e travas do tablet, recarregando do servidor"
+                          >
+                            <RotateCcw size={14} /> RESETAR TABLET
                           </button>
                         </div>
                       </div>

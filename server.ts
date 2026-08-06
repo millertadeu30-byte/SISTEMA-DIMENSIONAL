@@ -28,28 +28,66 @@ function inicializarBanco() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  const colabsPadrao = ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"];
-  const maqsPadrao = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
+  const colabsPadraoAut = ["ANSELMO", "ALEXANDER", "IAGO", "DANIEL", "WILSON", "JULIO", "MILLER"];
+  const maqsPadraoAut = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
+
+  const colabsPadraoCNC = ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"];
+  const maqsPadraoCNC = ["04", "06", "07", "08", "09"];
 
   if (!fs.existsSync(CADASTRO_FILE)) {
     fs.writeFileSync(
       CADASTRO_FILE,
-      JSON.stringify({ colaboradores: colabsPadrao, maquinas: maqsPadrao }, null, 2),
+      JSON.stringify({ colaboradores: colabsPadraoAut, maquinas: maqsPadraoAut }, null, 2),
       "utf8"
     );
   }
 
+  const setoresIniciaisPadrao: Setor[] = [
+    {
+      id: "t-automatico",
+      titulo: "SISTEMA DIMENSIONAL TORNO AUT.",
+      senha: "",
+      maquinas: maqsPadraoAut,
+      colaboradores: colabsPadraoAut
+    },
+    {
+      id: "t-cnc",
+      titulo: "SISTEMA DIMENSIONAL TCNC",
+      senha: "",
+      maquinas: maqsPadraoCNC,
+      colaboradores: colabsPadraoCNC
+    }
+  ];
+
   if (!fs.existsSync(SETORES_FILE)) {
-    const setoresIniciais: Setor[] = [
-      {
-        id: "t-automatico",
-        titulo: "SISTEMA DIMENSIONAL T.AUTOMÁTICO",
-        senha: "",
-        maquinas: maqsPadrao,
-        colaboradores: colabsPadrao
+    fs.writeFileSync(SETORES_FILE, JSON.stringify(setoresIniciaisPadrao, null, 2), "utf8");
+  } else {
+    try {
+      const content = fs.readFileSync(SETORES_FILE, "utf8");
+      let setoresExistentes: Setor[] = JSON.parse(content);
+      if (!Array.isArray(setoresExistentes) || setoresExistentes.length === 0) {
+        fs.writeFileSync(SETORES_FILE, JSON.stringify(setoresIniciaisPadrao, null, 2), "utf8");
+      } else {
+        let mudou = false;
+        // Garantir TORNO AUT
+        const temAut = setoresExistentes.some(s => s.id === "t-automatico" || s.id === "dimensional-t-automatico" || s.titulo.includes("TORNO AUT") || s.titulo.includes("AUTOMÁTICO"));
+        if (!temAut) {
+          setoresExistentes.unshift(setoresIniciaisPadrao[0]);
+          mudou = true;
+        }
+        // Garantir TCNC
+        const temCNC = setoresExistentes.some(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
+        if (!temCNC) {
+          setoresExistentes.push(setoresIniciaisPadrao[1]);
+          mudou = true;
+        }
+        if (mudou) {
+          fs.writeFileSync(SETORES_FILE, JSON.stringify(setoresExistentes, null, 2), "utf8");
+        }
       }
-    ];
-    fs.writeFileSync(SETORES_FILE, JSON.stringify(setoresIniciais, null, 2), "utf8");
+    } catch {
+      fs.writeFileSync(SETORES_FILE, JSON.stringify(setoresIniciaisPadrao, null, 2), "utf8");
+    }
   }
 
   if (!fs.existsSync(REGISTROS_FILE)) {
@@ -223,6 +261,23 @@ app.delete("/api/setores/:id", async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Erro ao excluir setor" });
+  }
+});
+
+// Restaurar Backup Completo no Servidor
+app.post("/api/backup/restaurar", async (req, res) => {
+  try {
+    const { setores, registros } = req.body;
+    if (setores && Array.isArray(setores) && setores.length > 0) {
+      await salvarJSON(SETORES_FILE, setores);
+    }
+    if (registros && Array.isArray(registros) && registros.length > 0) {
+      await salvarJSON(REGISTROS_FILE, registros);
+    }
+    res.json({ success: true, message: "Backup restaurado com sucesso no servidor!" });
+  } catch (error) {
+    console.error("Erro ao restaurar backup:", error);
+    res.status(500).json({ error: "Erro ao restaurar backup no servidor" });
   }
 });
 
