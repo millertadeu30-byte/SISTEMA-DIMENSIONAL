@@ -1017,6 +1017,10 @@ export default function App() {
       alert("POR FAVOR, DESCREVA A NÃO CONFORMIDADE!");
       return;
     }
+    if (!tempCod.trim()) {
+      alert("POR FAVOR, DIGITE O CÓDIGO ALTERNATIVO DA PEÇA!");
+      return;
+    }
     if (!tempResp) {
       alert("SELECIONE O COLABORADOR COMUNICADO!");
       return;
@@ -1052,6 +1056,10 @@ export default function App() {
   const salvarDMMForm = () => {
     if (!tempDMM.trim()) {
       alert("POR FAVOR, DESCREVA A DIVERGÊNCIA!");
+      return;
+    }
+    if (!tempCodAlternativo.trim()) {
+      alert("POR FAVOR, DIGITE O CÓDIGO ALTERNATIVO DA PEÇA!");
       return;
     }
     setPayload(prev => ({
@@ -2027,7 +2035,7 @@ export default function App() {
 
                           <div>
                             <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
-                              CÓDIGO ALTERNATIVO DA PEÇA:
+                              CÓDIGO ALTERNATIVO DA PEÇA: *
                             </label>
                             <input
                               type="text"
@@ -2142,15 +2150,15 @@ export default function App() {
                           </div>
 
                           <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 tracking-wider">
-                              CÓD. ALTERNATIVO (OPCIONAL - DISCRETO)
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">
+                              CÓDIGO ALTERNATIVO DA PEÇA: *
                             </label>
                             <input
                               type="text"
                               value={tempCodAlternativo}
                               onChange={e => setTempCodAlternativo(e.target.value)}
-                              placeholder="EX: COD-123"
-                              className="w-full md:w-1/2 bg-slate-950/40 border border-slate-800/80 focus:border-orange-500 focus:outline-none rounded-xl px-4 py-2.5 text-xs text-slate-300 font-bold uppercase placeholder:text-slate-700"
+                              placeholder="EX: PCA-102"
+                              className="w-full bg-slate-950 border border-slate-800 focus:border-orange-500 focus:outline-none rounded-xl px-4 py-3 text-base text-white font-bold uppercase placeholder:text-slate-600"
                             />
                           </div>
                         </div>
@@ -3594,6 +3602,11 @@ export default function App() {
                       <div className="flex justify-between items-center font-bold">
                         <span className="text-red-400 group-hover:text-red-300 flex items-center gap-1">
                           <Lock size={12} className="text-red-500/80 animate-pulse" /> MAQ: {d.maq}
+                          {d.codAlternativo && d.codAlternativo !== "-" && (
+                            <span className="text-orange-400 text-[10px] font-bold ml-1">
+                              | {d.codAlternativo}
+                            </span>
+                          )}
                         </span>
                         <div className="flex items-center gap-2">
                           {d.comentarioSupervisor && (
@@ -3616,13 +3629,6 @@ export default function App() {
                       <div className="text-slate-300 text-[11px] truncate uppercase pr-12">
                         {d.motivo}
                       </div>
-                      {d.codAlternativo && d.codAlternativo !== "-" && (
-                        <div className="text-[10px] text-orange-400 font-bold uppercase mt-1 flex items-center gap-1">
-                          <span className="bg-orange-950/50 border border-orange-900/40 px-1.5 py-0.5 rounded text-[9px]">
-                            CÓD. ALTERNATIVO: {d.codAlternativo}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   ))}
                   {desvios.length === 0 && (

@@ -186,10 +186,16 @@ async function executeWithFallback<T>(
     return await serverCall();
   }
 
+  // Promise that rejects after 4 seconds
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Firestore operation timed out")), 4000)
+  );
+
   try {
-    return await firestoreCall();
+    // Race firestoreCall against the timeoutPromise to avoid infinite hanging
+    return await Promise.race([firestoreCall(), timeoutPromise]);
   } catch (error: any) {
-    console.error("[Firestore Error] Firestore operation failed:", error);
+    console.error("[Firestore Error] Firestore operation failed or timed out:", error);
     const errMessage = String(error?.message || error).toLowerCase();
     const isQuotaError = 
       errMessage.includes("quota") || 
@@ -198,10 +204,12 @@ async function executeWithFallback<T>(
       errMessage.includes("permission-denied") ||
       errMessage.includes("insufficient permissions") ||
       errMessage.includes("offline") ||
+      errMessage.includes("timeout") ||
+      errMessage.includes("timed out") ||
       errMessage.includes("failed to get document");
 
     if (isQuotaError) {
-      console.warn("[Quota / Network Error] Activating automatic fallback to local server database.");
+      console.warn("[Quota / Network / Timeout Error] Activating automatic fallback to local server database.");
       setFallbackState(true);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("firebase-quota-exceeded"));
@@ -312,22 +320,39 @@ function processAlertasAndHistorico(registros: any[], setorId?: string) {
         problema: r.naoConformidade,
         maquina: r.maquina,
         hora: r.hora ? r.hora.substring(0, 5) : "",
-        data: r.data
+        data: r.data,
+        codigoPeca: r.codigoPeca || r.codAlternativo || "-"
       });
     }
 
-    const isProblem = textoNC !== "OK" && textoNC !== "-" && textoNC !== "";
+    const isProblem = (textoNC !== "OK" && textoNC !== "-" && textoNC !== "") || (r.usoDMM === "NÃO");
     if (isProblem) {
+      let problemaExibido = "";
+      if (textoNC !== "OK" && textoNC !== "-" && textoNC !== "") {
+        problemaExibido = textoNC;
+        if (r.usoDMM === "NÃO" && r.motivoDMM && r.motivoDMM !== "-") {
+          problemaExibido += ` | DIVERGÊNCIA: ${r.motivoDMM.trim().toUpperCase()}`;
+        }
+      } else if (r.usoDMM === "NÃO" && r.motivoDMM) {
+        problemaExibido = r.motivoDMM.trim().toUpperCase();
+      }
+
       const infoTroca = r.trocaFerramenta === "SIM" ? ` | TROCA: ${r.oQueTrocou} por ${r.quemTrocou}` : "";
       const solucaoCompleta = solucao ? `${solucao}${infoTroca}` : `PENDENTE${infoTroca}`;
+      
+      const codPecaHistorico = (r.codigoPeca && r.codigoPeca !== "-")
+        ? r.codigoPeca.trim().toUpperCase()
+        : ((r.codAlternativo && r.codAlternativo !== "-") ? r.codAlternativo.trim().toUpperCase() : "-");
+
       historico.push({
         data: r.data,
         hora: r.hora ? r.hora.substring(0, 5) : "",
         maquina: r.maquina,
-        problema: textoNC,
+        problema: problemaExibido,
         responsavel: r.responsavel || "NÃO INFORMADO",
         colaborador: r.colaborador || "NÃO INFORMADO",
-        solucao: solucaoCompleta
+        solucao: solucaoCompleta,
+        codigoPeca: codPecaHistorico
       });
     }
   });
@@ -350,6 +375,7 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
       motivo: string; 
       linha?: string; 
       comentarioSupervisor?: string;
+      codAlternativo?: string;
     } 
   } = {};
   
@@ -358,7 +384,8 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
       ultimaMedicaoMinutos: null,
       formatada: "S/R",
       divergencia: false,
-      motivo: ""
+      motivo: "",
+      codAlternativo: ""
     };
   });
 
@@ -371,7 +398,7 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
 
       const maq = r.maquina;
       if (!estadoMaq[maq]) {
-        estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "" };
+        estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "", codAlternativo: "" };
       }
 
       const minutesReg = parseHoraParaMinutos(r.hora || "");
@@ -390,6 +417,7 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
         estadoMaq[maq].divergencia = true;
         estadoMaq[maq].linha = r.linha;
         estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
+        estadoMaq[maq].codAlternativo = r.codAlternativo || "";
         if (motivo !== "" && motivo !== "-") {
           estadoMaq[maq].motivo = motivo;
         }
@@ -398,6 +426,7 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
         estadoMaq[maq].motivo = "";
         estadoMaq[maq].linha = undefined;
         estadoMaq[maq].comentarioSupervisor = undefined;
+        estadoMaq[maq].codAlternativo = "";
       }
     }
   });
@@ -418,7 +447,8 @@ function processMonitoramento(registros: any[], maquinasSetor: string[], setorId
         maq: m,
         motivo: estadoMaq[m].motivo || "Divergência",
         linha: estadoMaq[m].linha,
-        comentarioSupervisor: estadoMaq[m].comentarioSupervisor
+        comentarioSupervisor: estadoMaq[m].comentarioSupervisor,
+        codAlternativo: estadoMaq[m].codAlternativo || ""
       });
     }
   });
@@ -919,6 +949,7 @@ export async function fbSalvarMedicao(dados: Partial<Registro>, setorId?: string
     oQueTrocou: dados.oQueTrocou || "-",
     quemTrocou: dados.quemTrocou || "-",
     modeloPeca: dados.modeloPeca || "-",
+    codAlternativo: dados.codAlternativo || "-",
     timestamp: Date.now()
   };
 

@@ -386,23 +386,40 @@ app.get("/api/alertas", async (req, res) => {
           problema: r.naoConformidade,
           maquina: r.maquina,
           hora: r.hora.substring(0, 5),
-          data: r.data
+          data: r.data,
+          codigoPeca: r.codigoPeca || r.codAlternativo || "-"
         });
       }
 
-      // Adiciona ao histórico apenas se for uma Não Conformidade (NC) dimensional
-      const isProblem = textoNC !== "OK" && textoNC !== "-" && textoNC !== "";
+      // Adiciona ao histórico se for uma Não Conformidade (NC) dimensional ou uma Divergência DMM
+      const isProblem = (textoNC !== "OK" && textoNC !== "-" && textoNC !== "") || (r.usoDMM === "NÃO");
       if (isProblem) {
+        let problemaExibido = "";
+        if (textoNC !== "OK" && textoNC !== "-" && textoNC !== "") {
+          problemaExibido = textoNC;
+          if (r.usoDMM === "NÃO" && r.motivoDMM && r.motivoDMM !== "-") {
+            problemaExibido += ` | DIVERGÊNCIA: ${r.motivoDMM.trim().toUpperCase()}`;
+          }
+        } else if (r.usoDMM === "NÃO" && r.motivoDMM) {
+          problemaExibido = r.motivoDMM.trim().toUpperCase();
+        }
+
         const infoTroca = r.trocaFerramenta === "SIM" ? ` | TROCA: ${r.oQueTrocou} por ${r.quemTrocou}` : "";
         const solucaoCompleta = solucao ? `${solucao}${infoTroca}` : `PENDENTE${infoTroca}`;
+
+        const codPecaHistorico = (r.codigoPeca && r.codigoPeca !== "-")
+          ? r.codigoPeca.trim().toUpperCase()
+          : ((r.codAlternativo && r.codAlternativo !== "-") ? r.codAlternativo.trim().toUpperCase() : "-");
+
         historico.push({
           data: r.data,
           hora: r.hora.substring(0, 5),
           maquina: r.maquina,
-          problema: textoNC,
+          problema: problemaExibido,
           responsavel: r.responsavel || "NÃO INFORMADO",
           colaborador: r.colaborador || "NÃO INFORMADO",
-          solucao: solucaoCompleta
+          solucao: solucaoCompleta,
+          codigoPeca: codPecaHistorico
         });
       }
     });
@@ -480,6 +497,7 @@ app.get("/api/monitoramento", async (req, res) => {
         motivo: string; 
         linha?: number; 
         comentarioSupervisor?: string;
+        codAlternativo?: string;
       } 
     } = {};
     
@@ -488,7 +506,8 @@ app.get("/api/monitoramento", async (req, res) => {
         ultimaMedicaoMinutos: null,
         formatada: "S/R",
         divergencia: false,
-        motivo: ""
+        motivo: "",
+        codAlternativo: ""
       };
     });
 
@@ -503,7 +522,7 @@ app.get("/api/monitoramento", async (req, res) => {
 
         const maq = r.maquina;
         if (!estadoMaq[maq]) {
-          estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "" };
+          estadoMaq[maq] = { ultimaMedicaoMinutos: null, formatada: "S/R", divergencia: false, motivo: "", codAlternativo: "" };
         }
 
         // Calcula minutos do registro
@@ -523,6 +542,7 @@ app.get("/api/monitoramento", async (req, res) => {
           estadoMaq[maq].divergencia = true;
           estadoMaq[maq].linha = idx;
           estadoMaq[maq].comentarioSupervisor = r.comentarioSupervisor || "";
+          estadoMaq[maq].codAlternativo = r.codAlternativo || "";
           if (motivo !== "" && motivo !== "-") {
             estadoMaq[maq].motivo = motivo;
           }
@@ -531,6 +551,7 @@ app.get("/api/monitoramento", async (req, res) => {
           estadoMaq[maq].motivo = "";
           estadoMaq[maq].linha = undefined;
           estadoMaq[maq].comentarioSupervisor = undefined;
+          estadoMaq[maq].codAlternativo = "";
         }
       }
     });
@@ -552,7 +573,8 @@ app.get("/api/monitoramento", async (req, res) => {
           maq: m,
           motivo: estadoMaq[m].motivo || "Divergência",
           linha: estadoMaq[m].linha,
-          comentarioSupervisor: estadoMaq[m].comentarioSupervisor
+          comentarioSupervisor: estadoMaq[m].comentarioSupervisor,
+          codAlternativo: estadoMaq[m].codAlternativo || ""
         });
       }
     });
@@ -575,6 +597,7 @@ app.post("/api/medicao", async (req, res) => {
     const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
 
     const novoRegistro: Registro = {
+      linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
       setorId: dados.setorId || "t-automatico",
       data: dataHoje,
       hora: horaHoje,
@@ -590,7 +613,8 @@ app.post("/api/medicao", async (req, res) => {
       trocaFerramenta: dados.trocaFerramenta || "NÃO",
       oQueTrocou: dados.oQueTrocou || "-",
       quemTrocou: dados.quemTrocou || "-",
-      modeloPeca: dados.modeloPeca || "-"
+      modeloPeca: dados.modeloPeca || "-",
+      codAlternativo: dados.codAlternativo || "-"
     };
 
     registros.push(novoRegistro);
@@ -610,9 +634,17 @@ app.post("/api/resolver-nc", async (req, res) => {
     }
 
     const registros = await lerJSON<Registro[]>(REGISTROS_FILE);
-    const idx = parseInt(linha, 10);
     
-    if (isNaN(idx) || idx < 0 || idx >= registros.length) {
+    // Find by custom 'linha' string ID first, then fallback to index
+    let idx = registros.findIndex(r => r.linha && String(r.linha) === String(linha));
+    if (idx === -1) {
+      const parsedIdx = parseInt(linha, 10);
+      if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < registros.length) {
+        idx = parsedIdx;
+      }
+    }
+    
+    if (idx === -1) {
       return res.status(404).json({ error: "Registro não encontrado" });
     }
 
@@ -639,6 +671,7 @@ app.post("/api/liberar-divergencia", async (req, res) => {
     const { data: dataHoje, hora: horaHoje } = getFormatoBrasil();
 
     const registroSupervisor: Registro = {
+      linha: "reg-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
       setorId: setorId || "t-automatico",
       data: dataHoje,
       hora: horaHoje,
@@ -691,13 +724,18 @@ app.get("/api/registros", async (req, res) => {
 app.delete("/api/registros/:linha", async (req, res) => {
   try {
     const { linha } = req.params;
-    const idx = parseInt(linha, 10);
-    if (isNaN(idx)) {
-      return res.status(400).json({ error: "Índice do registro inválido" });
+    const registros = await lerJSON<Registro[]>(REGISTROS_FILE);
+
+    // Find by custom 'linha' string ID first, then fallback to index
+    let idx = registros.findIndex(r => r.linha && String(r.linha) === String(linha));
+    if (idx === -1) {
+      const parsedIdx = parseInt(linha, 10);
+      if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < registros.length) {
+        idx = parsedIdx;
+      }
     }
 
-    const registros = await lerJSON<Registro[]>(REGISTROS_FILE);
-    if (idx < 0 || idx >= registros.length) {
+    if (idx === -1) {
       return res.status(404).json({ error: "Registro não encontrado para exclusão" });
     }
 
@@ -715,17 +753,23 @@ app.post("/api/registros/:linha/comentar", async (req, res) => {
   try {
     const { linha } = req.params;
     const { comentario } = req.body;
-    const idx = parseInt(linha, 10);
-    if (isNaN(idx)) {
-      return res.status(400).json({ error: "Índice do registro inválido" });
-    }
 
     if (!comentario) {
       return res.status(400).json({ error: "O comentário é obrigatório" });
     }
 
     const registros = await lerJSON<Registro[]>(REGISTROS_FILE);
-    if (idx < 0 || idx >= registros.length) {
+
+    // Find by custom 'linha' string ID first, then fallback to index
+    let idx = registros.findIndex(r => r.linha && String(r.linha) === String(linha));
+    if (idx === -1) {
+      const parsedIdx = parseInt(linha, 10);
+      if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < registros.length) {
+        idx = parsedIdx;
+      }
+    }
+
+    if (idx === -1) {
       return res.status(404).json({ error: "Registro não encontrado para inserção de comentário" });
     }
 
