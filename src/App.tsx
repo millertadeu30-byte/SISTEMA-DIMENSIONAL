@@ -823,33 +823,6 @@ export default function App() {
     }
   };
 
-  const ativarModoOfflineLocal = () => {
-    fbAtivarModoOffline();
-    setOfflineMode(true);
-    setDbError(null);
-    // Reload everything
-    carregarSetores();
-    if (setorSelecionado) {
-      carregarCadastro(setorSelecionado.id);
-      carregarAlertas(setorSelecionado.id);
-      carregarMonitoramento(setorSelecionado.id);
-    }
-    alert("MODO OFFLINE ATIVADO COM SUCESSO! SEUS DADOS AGORA SERÃO SALVOS DE FORMA SEGURA E TOTALMENTE GRATUITA NO SEU NAVEGADOR.");
-  };
-
-  const desativarModoOfflineLocal = () => {
-    fbDesativarModoOffline();
-    setOfflineMode(false);
-    // Reload everything
-    carregarSetores();
-    if (setorSelecionado) {
-      carregarCadastro(setorSelecionado.id);
-      carregarAlertas(setorSelecionado.id);
-      carregarMonitoramento(setorSelecionado.id);
-    }
-    alert("MODO OFFLINE DESATIVADO. O SISTEMA ESTÁ SE CONECTANDO AO BANCO DE DADOS FIREBASE EM NUVEM.");
-  };
-
   const exportarDadosParaTexto = async () => {
     try {
       let backupJson = "";
@@ -1728,41 +1701,30 @@ export default function App() {
                   {dbError === "quota" ? (
                     <>
                       Seus dados, planilhas e registros anteriores estão <strong className="text-emerald-400">totalmente seguros e intactos</strong> no banco de dados. No entanto, o limite diário de leitura gratuita do Firestore para hoje foi excedido.
-                      <span className="block mt-2 text-slate-400 font-medium">
-                        O Firebase restabelecerá o acesso automaticamente à meia-noite (fuso horário do servidor). Você pode ativar o Modo Offline Gratuito para continuar trabalhando agora mesmo!
+                      <span className="block mt-2 text-emerald-400 font-bold uppercase">
+                        ⚡ O SISTEMA JÁ REDIRECIONOU DE FORMA 100% AUTOMÁTICA TODAS AS OPERAÇÕES PARA O SERVIDOR CENTRAL (CLOUD RUN). A PRODUÇÃO NÃO FOI AFETADA E VOCÊ PODE CONTINUAR TRABALHANDO NORMALMENTE!
                       </span>
                       <div className="mt-4 flex flex-wrap items-center gap-3">
                         <button
-                          onClick={ativarModoOfflineLocal}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                          onClick={carregarSetores}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
                         >
-                          ⚡ ATIVAR MODO OFFLINE GRATUITO AGORA (SALVAR LOCAL)
+                          🔄 REVERIFICAR CONEXÃO
                         </button>
-                        <a 
-                          href="https://console.firebase.google.com/project/gen-lang-client-0844737316/firestore/databases/ai-studio-controledimensio-6e3c047d-fc65-4f73-85b9-7a4b143c1b74/data?openUpgradeDialog=true"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 font-black px-4 py-2.5 rounded-xl text-xs transition uppercase cursor-pointer"
-                        >
-                          Acessar Console do Firebase ↗
-                        </a>
                       </div>
                     </>
                   ) : (
                     <>
-                      Ocorreu um erro ao conectar com o banco de dados Firebase. Por favor, verifique a sua conexão com a internet ou tente novamente.
+                      Ocorreu um erro ao conectar com o banco de dados Firebase. 
+                      <span className="block mt-2 text-emerald-400 font-bold uppercase">
+                        ⚡ O SISTEMA ATIVOU O FALLBACK AUTOMÁTICO PARA O SERVIDOR CENTRAL (CLOUD RUN) PARA EVITAR PARADAS NA PRODUÇÃO.
+                      </span>
                       <div className="mt-4 flex flex-wrap items-center gap-3">
                         <button
                           onClick={carregarSetores}
                           className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
                         >
                           🔄 TENTAR NOVAMENTE
-                        </button>
-                        <button
-                          onClick={ativarModoOfflineLocal}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
-                        >
-                          ⚡ ATIVAR MODO OFFLINE GRATUITO (SALVAR LOCAL)
                         </button>
                       </div>
                     </>

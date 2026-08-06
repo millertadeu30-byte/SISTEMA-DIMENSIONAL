@@ -88,18 +88,14 @@ export function getBackendUrl(): string {
   return "https://ais-pre-ronann3digcd7qkrwc3nay-25708931279.us-west1.run.app";
 }
 
-// Active/offline modes based on explicit user setting
+// Active/offline modes based on explicit user setting - completely disabled as requested by user
 export function isOfflineMode(): boolean {
-  try {
-    return localStorage.getItem("offline_mode_active") === "true";
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 export function fbAtivarModoOffline(): void {
   try {
-    localStorage.setItem("offline_mode_active", "true");
+    localStorage.setItem("offline_mode_active", "false");
   } catch {}
 }
 
