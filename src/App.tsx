@@ -1749,7 +1749,23 @@ export default function App() {
                       </div>
                     </>
                   ) : (
-                    "Ocorreu um erro ao conectar com o banco de dados Firebase. Por favor, verifique a sua conexão com a internet ou atualize a página."
+                    <>
+                      Ocorreu um erro ao conectar com o banco de dados Firebase. Por favor, verifique a sua conexão com a internet ou tente novamente.
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={carregarSetores}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          🔄 TENTAR NOVAMENTE
+                        </button>
+                        <button
+                          onClick={ativarModoOfflineLocal}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-xl text-xs transition uppercase tracking-wider shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          ⚡ ATIVAR MODO OFFLINE GRATUITO (SALVAR LOCAL)
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>

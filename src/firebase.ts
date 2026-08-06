@@ -186,15 +186,24 @@ async function executeWithFallback<T>(
     return await serverCall();
   }
 
-  // Promise that rejects after 4 seconds
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("Firestore operation timed out")), 4000)
-  );
+  let timeoutId: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("Firestore operation timed out"));
+    }, 15000); // 15 seconds generous timeout for slow factory networks
+  });
 
   try {
-    // Race firestoreCall against the timeoutPromise to avoid infinite hanging
-    return await Promise.race([firestoreCall(), timeoutPromise]);
+    const result = await Promise.race([
+      firestoreCall().then((res) => {
+        clearTimeout(timeoutId);
+        return res;
+      }),
+      timeoutPromise
+    ]);
+    return result;
   } catch (error: any) {
+    clearTimeout(timeoutId);
     console.error("[Firestore Error] Firestore operation failed or timed out:", error);
     const errMessage = String(error?.message || error).toLowerCase();
     const isQuotaError = 
