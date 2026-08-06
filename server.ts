@@ -32,7 +32,7 @@ function inicializarBanco() {
   const maqsPadraoAut = ["3", "4", "5", "6", "7", "8", "9", "12", "13", "S1", "S2", "T1", "T2"];
 
   const colabsPadraoCNC = ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"];
-  const maqsPadraoCNC = ["04", "06", "07", "08", "09"];
+  const maqsPadraoCNC = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16"];
 
   if (!fs.existsSync(CADASTRO_FILE)) {
     fs.writeFileSync(
@@ -76,9 +76,14 @@ function inicializarBanco() {
           mudou = true;
         }
         // Garantir TCNC
-        const temCNC = setoresExistentes.some(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
-        if (!temCNC) {
+        const cncIdx = setoresExistentes.findIndex(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
+        if (cncIdx === -1) {
           setoresExistentes.push(setoresIniciaisPadrao[1]);
+          mudou = true;
+        } else if (setoresExistentes[cncIdx].maquinas.length < 16) {
+          // Atualiza com as 16 máquinas se estiver desatualizado
+          const setMaq = new Set([...setoresExistentes[cncIdx].maquinas, ...maqsPadraoCNC]);
+          setoresExistentes[cncIdx].maquinas = Array.from(setMaq).sort();
           mudou = true;
         }
         if (mudou) {

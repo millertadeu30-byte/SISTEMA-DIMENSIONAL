@@ -547,7 +547,7 @@ export async function fbObterSetores(): Promise<Setor[]> {
       id: "dimensional-t-cnc",
       titulo: "SISTEMA DIMENSIONAL TCNC",
       senha: "1234",
-      maquinas: ["04", "06", "07", "08", "09"],
+      maquinas: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16"],
       colaboradores: ["GABRIEL", "DIEGO", "CLEMILSON", "CRISTIAN", "MILLER", "CAIO", "CARLOS", "IGOR"]
     }
   ];
@@ -583,10 +583,17 @@ export async function fbObterSetores(): Promise<Setor[]> {
       }
 
       // Verificar TCNC
-      const temCNC = list.some(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
-      if (!temCNC) {
+      const cncIndex = list.findIndex(s => s.id === "t-cnc" || s.id === "dimensional-t-cnc" || s.titulo.includes("TCNC") || s.titulo.includes("T.CNC"));
+      if (cncIndex === -1) {
         list.push(defaultSetoresPadrao[1]);
         batch.set(doc(db, "setores", defaultSetoresPadrao[1].id), defaultSetoresPadrao[1]);
+        mudou = true;
+      } else if (!list[cncIndex].maquinas || list[cncIndex].maquinas.length < 16) {
+        // Garantir que todas as 16 máquinas do TCNC estejam presentes
+        const maqs16 = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16"];
+        const mergedMaquinas = Array.from(new Set([...(list[cncIndex].maquinas || []), ...maqs16])).sort();
+        list[cncIndex].maquinas = mergedMaquinas;
+        batch.update(doc(db, "setores", list[cncIndex].id), { maquinas: mergedMaquinas });
         mudou = true;
       }
 
